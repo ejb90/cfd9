@@ -1,0 +1,198 @@
+%% LaTeX_Dissertation_Template.tex
+% An unofficial LaTeX template for `Cranfield theses.
+% 2017/08/14 Daniel Auger's unofficial Cranfield dissertation .sty file
+% 2023/05/31 Updated by Shaun Forth (SAF) for logo inclusion
+% 2023/06/08 SAF removed capitalisation on title pages on advice of Amy 
+% Greenaway and Alison Waters. Added Daniel Auger's headers with 
+% chapter and section names.
+% 2023/06/08 SAF simplified logo inclusion
+
+%%
+% This document is an example of the use of the "CUDissertation2025" 
+% LaTeX style file.  
+
+\documentclass[12pt,oneside]{book} % for one-sided printing
+%\documentclass[12pt,twoside]{book} % for two-sided printing
+
+
+% Use the custom "CUDissertation2025" LaTeX style file. 
+\usepackage{CUDissertation2025}
+\usepackage{lscape} % for landscape pages
+\usepackage{placeins}
+\usepackage{mathtools}
+\usepackage{siunitx}
+
+
+% By default, LaTeX uses a serif font - these are traditionally thought to be
+% easier to read.   If you'd prefer sans-serif, please uncomment the 
+% following line.
+% \renewcommand{\familydefault}{\sfdefault}
+
+
+% Example parameters for a typical taught MSc course 
+	\title{...}
+	\author{Ellis Broatch}
+	\date{August 2026}
+	\faculty{\FEAS}
+	\course{Computational Fluid Dynamics}
+	\degree{MSc}
+      \supervisor{Professor Panagiotis Tsoutsanis}
+	\academicyear{2025--2026}
+	\copyrightyear{2026}
+	
+
+%% COPYRIGHT NOTICES
+%
+% By default, a Cranfield University copyright statement is displayed. 
+% MOD sponsored student theses will usually be Crown Copyright, and 
+% should use the following command:
+%
+\copyrightholder{UK Ministry of Defence \copyright\ Crown Owned Copyright 2026/AWE}
+%
+% Do something similar if your copyright belongs to anyone else
+
+% References
+
+
+
+% Cranfield Author Date
+%\usepackage{csquotes}
+%\usepackage[style=apa]{biblatex}
+%\renewcommand{\cite}[2][1]{\parencite[#1]{#2}} % so \cite defaults to \parencite
+%\addbibresource{LaTeX.bib}
+%\addbibresource{CUCitations.bib}
+\includeonly{Author-Date}
+ 
+\begin{document}
+
+%% Front matter
+%
+% This is where we do the title page, etc.
+%
+
+\frontmatter
+
+% Standard-Form Title Pages
+\maketitle
+    
+% Abstract and Keywords
+\begin{abstract}
+
+...
+
+\end{abstract}
+
+\begin{keywords}
+CFD, UCNS3D, shocks, bubbles, shock-bubble interaction.
+\end{keywords}
+
+% Acknowledgements
+\chapter{Acknowledgements}
+
+...
+
+{
+\clearpage
+\singlespacing
+% Table of Contents
+{
+\tableofcontents
+}
+\clearpage
+
+% List of Figures
+\listoffigures
+
+\clearpage
+% List of Tables
+\listoftables
+}
+
+% The list of abbreviations can't be automatically generated so you need to populate it yourself
+\begin{listofabbreviations}
+    \abbrev{CFD}{Computational Fluid Dynamics}
+    \abbrev{CWENO}{Central Weighted Essentially Non-Oscillatory}
+    \abbrev{ENO}{Essentially Non-Oscillatory}
+    \abbrev{EOS}{Equation of State}
+    \abbrev{DIM}{Diffuse Interface Method}
+    \abbrev{KHI}{Kelvin–Helmholtz Instability}    
+    \abbrev{ICF}{Inertial Confinement Fusion}
+    \abbrev{RMI}{Richtmyer–Meshkov Instability}    
+    \abbrev{SBI}{Shock-Bubble Interaction}
+    \abbrev{UCNS3D}{Unstructured Grids Compressible Solver Navier–Stokes 3D)}
+    \abbrev{VOF}{Volume of Fluid}
+    \abbrev{WENO}{Weighted Essentially Non-Oscillatory}
+\end{listofabbreviations}
+
+
+
+
+
+%% Main Matter
+%
+% This is where we include the main dissertation content.
+%
+\mainmatter
+\pagestyle{fancy}
+\fancyhead[L]{\nouppercase{\leftmark}}
+\fancyhead[R]{\nouppercase{\rightmark}}
+%\fancyhead[L]{\thetitle}
+%\fancyhead[C]{}
+%\fancyhead[R]{\theauthor}
+%\fancyfoot[L]{}
+%\fancyfoot[C]{\thepage}
+%\fancyfoot[R]{}
+
+\doublespacing
+% ============================================================================================
+\FloatBarrier
+\chapter{Introduction}\label{sec:intro}
+
+...
+
+
+% ============================================================================================
+\FloatBarrier
+\chapter{Literature Review}\label{sec:overview}
+
+...
+ 
+% ============================================================================================
+\FloatBarrier
+\chapter{Modelling Methodology}\label{sec:methods}
+
+...
+
+
+% ============================================================================================
+\FloatBarrier
+\chapter{Results and Discussion}\label{sec:results}
+
+...
+
+
+% ============================================================================================
+\FloatBarrier
+\chapter{Conclusions and Future Work}\label{sec:conclusions}
+
+...
+
+
+%% Back matter
+%
+% This is where we include references and appendices
+\renewcommand{\bibname}{References}  % for the report or book class
+\bibliographystyle{vancouver}
+\bibliography{bibliography}
+
+\FloatBarrier
+\printbibliography
+
+\FloatBarrier
+\appendix
+
+
+...
+
+\end{document}
+

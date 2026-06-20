@@ -1,0 +1,38 @@
+[project]
+name = "cfd9"
+version = "0.1.0"
+description = "MSc CFD Individual Research Project"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib",
+    "meshio>=5.3.5",
+    "numpy",
+    "pyqt5",
+    "pyvista",
+    "ruff>=0.14.13",
+]
+
+[tool.ruff]
+# Target version for Python 3.12+ (adjust to your project)
+target-version = "py312"
+line-length = 120
+extend-exclude = ["analysis/*.visit.py", "analysis/old"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+
+# 2. Ignore specific rules if needed
+ignore = []
+
+# 3. Configure specific plugin behavior
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-single-line = false
+
+[tool.ruff.format]
+# Standard "Black-compatible" formatting settings
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
