@@ -211,10 +211,41 @@ def print_table(runs: list[Run]) -> None:
     console.print(table)
 
 
-def plot_scaling(cruns, mruns):
+# def plot_scaling(cruns, mruns):
+#     """Plot compute performance scaling."""
+#     sfc = cruns[0].cpu_hours / cruns[0].ncells2**1.5
+#     sfm = mruns[0].cpu_hours / mruns[0].ncells2**1.5
+
+#     fig = plt.figure(figsize=(15, 10))
+#     ax1 = fig.add_subplot(211)
+#     ax2 = fig.add_subplot(212)
+#     ax1.set_xlabel("Number of Cells / ")
+#     ax1.set_ylabel("Compute / CPU.hrs")
+#     ax2.set_xlabel("Number of Cells / ")
+#     ax2.set_ylabel("Efficiency (Idealised/Actual Compute ratio) /")
+
+#     ax1.plot([r.ncells2 for r in cruns], [r.cpu_hours for r in cruns], label="Crescent2, Actual")
+#     ax1.plot([r.ncells2 for r in cruns], [sfc * r.ncells2**1.5 for r in cruns], label="Cresent2, Optimal")
+#     ax1.plot([r.ncells2 for r in mruns], [r.cpu_hours for r in mruns], label="MALFI, Actual")
+#     ax1.plot([r.ncells2 for r in mruns], [sfm * r.ncells2**1.5 for r in mruns], label="MALFI, Optimal")
+
+#     ax2.plot([r.ncells2 for r in cruns], [(sfc * r.ncells2**1.5) / r.cpu_hours for r in cruns], label="Cresent2 scaling")
+#     ax2.plot([r.ncells2 for r in mruns], [(sfm * r.ncells2**1.5) / r.cpu_hours for r in mruns], label="MALFI scaling")
+    
+#     ax1.semilogx()
+#     ax1.grid()
+#     ax1.legend()
+#     ax2.semilogx()
+#     ax2.grid()
+#     ax2.legend()
+#     plt.tight_layout()
+#     plt.show()
+#     fig.savefig(f"compute_scaling")
+
+
+def plot_scaling(runs):
     """Plot compute performance scaling."""
-    sfc = cruns[0].cpu_hours / cruns[0].ncells2**1.5
-    sfm = mruns[0].cpu_hours / mruns[0].ncells2**1.5
+    sfc = runs[0].cpu_hours / runs[0].ncells2**1.5
 
     fig = plt.figure(figsize=(15, 10))
     ax1 = fig.add_subplot(211)
@@ -224,13 +255,10 @@ def plot_scaling(cruns, mruns):
     ax2.set_xlabel("Number of Cells / ")
     ax2.set_ylabel("Efficiency (Idealised/Actual Compute ratio) /")
 
-    ax1.plot([r.ncells2 for r in cruns], [r.cpu_hours for r in cruns], label="Crescent2, Actual")
-    ax1.plot([r.ncells2 for r in cruns], [sfc * r.ncells2**1.5 for r in cruns], label="Cresent2, Optimal")
-    ax1.plot([r.ncells2 for r in mruns], [r.cpu_hours for r in mruns], label="MALFI, Actual")
-    ax1.plot([r.ncells2 for r in mruns], [sfm * r.ncells2**1.5 for r in mruns], label="MALFI, Optimal")
+    ax1.plot([r.ncells2 for r in runs], [r.cpu_hours for r in runs], label="Actual")
+    ax1.plot([r.ncells2 for r in runs], [sfc * r.ncells2**1.5 for r in runs], label="Optimal")
 
-    ax2.plot([r.ncells2 for r in cruns], [(sfc * r.ncells2**1.5) / r.cpu_hours for r in cruns], label="Cresent2 scaling")
-    ax2.plot([r.ncells2 for r in mruns], [(sfm * r.ncells2**1.5) / r.cpu_hours for r in mruns], label="MALFI scaling")
+    ax2.plot([r.ncells2 for r in runs], [(sfc * r.ncells2**1.5) / r.cpu_hours for r in runs], label="Scaling")
     
     ax1.semilogx()
     ax1.grid()
@@ -241,6 +269,7 @@ def plot_scaling(cruns, mruns):
     plt.tight_layout()
     plt.show()
     fig.savefig(f"compute_scaling")
+
 
 
 def build_malfi(runs):
@@ -275,14 +304,11 @@ def print_results(runs):
     """Print compute scaling results."""
     print_table(runs)
 
-    if True:
-        # Ensure same write frequency/type! (pVTU, 0.000001)
-        print_table(malfi)
-
 
 if __name__ == "__main__":
     runs = extract_data()
-    malfi = build_malfi(runs)
+    # malfi = build_malfi(runs)
     print_results(runs)
-    plot_scaling(runs, malfi)
+    # plot_scaling(runs, malfi)
+    plot_scaling(runs)
 
