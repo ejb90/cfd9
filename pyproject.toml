@@ -10,6 +10,7 @@ dependencies = [
     "numpy",
     "pyqt5",
     "pyvista",
+    "rich",
     "ruff>=0.14.13",
 ]
 

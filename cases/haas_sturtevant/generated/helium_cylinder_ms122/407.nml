@@ -1,0 +1,24 @@
+&bubble_case
+  shock_position_x = 0.1
+  left_pressure = 101325
+  left_velocity = 0, 0.0, 0.0
+  left_density = 1.198, 0.216
+  left_volume_fraction = 1.0, 0.0
+  right_pressure = 159059.98
+  right_velocity = -114.76066, 0.0, 0.0
+  right_density = 1.648884, 0.216
+  right_volume_fraction = 1.0, 0.0
+  bubble_count = 1
+/
+
+&bubble
+  bubble_center = 0, 0.0445, 0
+  bubble_initial_radius = 0.025
+  bubble_perturbation_amplitude = 0.0
+  bubble_perturbation_modes = 0
+  bubble_perturbation_phase = 0.0
+  bubble_pressure = 101325
+  bubble_velocity = 0.0, 0.0, 0.0
+  bubble_density = 1.198, 0.216
+  bubble_volume_fraction = 0.0, 1.0
+/
