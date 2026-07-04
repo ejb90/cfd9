@@ -3,7 +3,7 @@ name = "cfd9"
 version = "0.1.0"
 description = "MSc CFD Individual Research Project"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "matplotlib",
     "meshio>=5.3.5",
