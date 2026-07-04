@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "meshing"))
 
 from make_channel_mesh import linspace, piecewise_x, write_mesh  # noqa: E402
@@ -379,7 +379,7 @@ def write_notes(path: Path, config: CaseConfig) -> None:
         "",
         config.description,
         "",
-        "Generated from `cases/haas_sturtevant/generate_cases.py`.",
+        "Generated from `cases/generate_cases.py`.",
         "",
         "Case setup:",
         f"- Domain: x=[{domain.xmin:.8g}, {domain.xmax:.8g}], y=[{domain.ymin:.8g}, {domain.ymax:.8g}] m.",
