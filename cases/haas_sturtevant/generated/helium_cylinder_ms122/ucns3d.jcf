@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=haas-sturtevant
+#SBATCH --job-name=haas-helium
 #SBATCH --comment=UCNS3D
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=128
