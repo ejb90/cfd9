@@ -358,6 +358,15 @@ def calculate_metrics(config: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def write_metrics_json(config: dict[str, Any]) -> dict[str, Any]:
+    """Calculate metrics, write them to `config["json_out"]`, and return them."""
+    result = calculate_metrics(config)
+    json_out = Path(config.get("json_out", "metrics.json"))
+    json_out.parent.mkdir(parents=True, exist_ok=True)
+    json_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return result
+
+
 def region_from_cli(args: argparse.Namespace, prefix: str) -> dict[str, float | str] | None:
     """Build a region dictionary from argparse box/circle options."""
     box = getattr(args, f"{prefix}_box")
@@ -418,10 +427,7 @@ def main() -> int:
     try:
         args = parse_args()
         config = build_config_from_args(args)
-        result = calculate_metrics(config)
-        json_out = Path(config["json_out"])
-        json_out.parent.mkdir(parents=True, exist_ok=True)
-        json_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_metrics_json(config)
     except MetricsError as exc:
         raise SystemExit(f"error: {exc}") from exc
     return 0
