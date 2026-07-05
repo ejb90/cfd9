@@ -15,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from analysis.compute_ucns3d_metrics import write_metrics_json  # noqa: E402
 from cases.generate_cases import (  # noqa: E402
     Bubble,
     CaseConfig,
@@ -29,7 +30,6 @@ from optimisation.ucns3d_pymoo import (  # noqa: E402
     run_optimisation,
     slurm_from_args,
 )
-
 
 AIR = Material("air", gamma=1.4, density=1.198, sound_speed=344.0)
 HELIUM_MIX = Material("helium_mixture", gamma=1.48, density=0.216, sound_speed=833.0)
@@ -80,17 +80,36 @@ def make_case(values: dict[str, float], evaluation_index: int) -> CaseConfig:
 
 
 def objective(run_dir: Path, values: dict[str, float]) -> tuple[float, float]:
-    """Return objective values for a completed run.
-
-    Replace this with the real post-processing. The placeholder reads a simple
-    two-value file named objective.txt from the run directory, which makes the
-    orchestration testable before committing to a metric.
-    """
-    path = run_dir / "objective.txt"
-    text = path.read_text(encoding="ascii").replace(",", " ").split()
-    if len(text) < 2:
-        raise ValueError(f"expected at least two objective values in {path}")
-    return float(text[0]), float(text[1])
+    """Return pymoo minimisation objectives from UCNS3D VTU/PVTU metrics."""
+    metrics = write_metrics_json(
+        {
+            "output_dir": run_dir,
+            "json_out": run_dir / "metrics.json",
+            "pressure_field": "pressure",
+            "bad_material_field": "volume_fraction",
+            "p_incident": 1.0,
+            "p0": AMBIENT_PRESSURE,
+            "t_ref": 1.0e-6,
+            "target_region": {
+                "type": "circle",
+                "xc": values["bubble_x"],
+                "yc": values["bubble_y"],
+                "radius": 0.5 * values["bubble_diameter"],
+            },
+            "interaction_region": {
+                "type": "box",
+                "xmin": DOMAIN.refined_xmin,
+                "xmax": DOMAIN.refined_xmax,
+                "ymin": DOMAIN.ymin,
+                "ymax": DOMAIN.ymax,
+            },
+        }
+    )
+    return (
+        -metrics["Ap95_target"],
+        -metrics["Ip_target"],
+        metrics["Mbad_target"],
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,7 +124,7 @@ def main() -> None:
         parameters=PARAMETERS,
         make_case=make_case,
         objective=objective,
-        n_obj=2,
+        n_obj=3,
         work_dir=args.work_dir,
         slurm=slurm_from_args(args),
         generations=args.generations,
