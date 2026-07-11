@@ -1,379 +1,148 @@
-# CFD9 and UCNS3D Project History
+# CFD9 Project History
 
-This document summarises the work completed across the `cfd9` repository, the modified UCNS3D fork under `build/UCNS3D`, and the GKlib, METIS, and ParMETIS dependency repositories. It is reconstructed from the Git histories and saved Codex sessions from 20 June through 5 July 2026.
-
-The project evolved from getting UCNS3D to build and run into a broader shock–bubble interaction workflow: a modified N-material solver, reproducible case generation and meshing, run monitoring and convergence analysis, and a first multi-objective optimisation system.
+This is a compact summary of work completed specifically for `cfd9` and its modified UCNS3D fork. It excludes everything introduced by the initial commit (`670e1c4`), which was inherited from the earlier CFD8 project.
 
 ## 1. UCNS3D problems and bugs
 
-### Build and dependency problems
+### Build and dependency integration
 
-The initial UCNS3D build failed because GKlib, METIS, ParMETIS, UCNS3D, and the compiler/MPI environment were not consistently assembled.
+The original UCNS3D build did not reliably assemble GKlib, METIS, ParMETIS, UCNS3D, and MPI. The build scripts were reworked to:
 
-Work included:
+- Clone and build the dependencies in the correct order.
+- Ensure ParMETIS uses the intended METIS and GKlib builds.
+- Stage headers and static libraries without requiring unreliable full installs.
+- Avoid failing optional METIS executable targets.
+- Keep compiler, MPI, and dependency builds consistent.
+- Clone and build UCNS3D, then run a real one-timestep smoke test.
+- Support clean builds in a fresh directory, including under `/tmp`.
 
-- Cloning and building GKlib, METIS, and ParMETIS in the correct order.
-- Ensuring ParMETIS used the exact METIS and GKlib builds supplied by the script.
-- Avoiding optional METIS executable targets that failed under GCC 15 with warnings promoted to errors and LTO enabled.
-- Staging the required headers and static archives instead of relying on problematic `make install` targets.
-- Establishing that UCNS3D only needs the dependency headers and static libraries; it does not require those projects to be fully installed system-wide.
-- Ensuring UCNS3D was compiled and linked with mutually compatible compiler, MPI, ParMETIS, METIS, and GKlib builds.
-- Making fresh builds work outside the existing repository, including a complete build test under `/tmp`.
+The smoke-test path was also fixed to retain failed cases, use an absolute executable path, detect Git LFS mesh pointers, capture MPI failures, and validate genuine time advancement and output.
 
-The resulting build automation was developed first in the outer repository and then in `build/UCNS3D/local.bash`. The outer wrapper later became `scripts/build.bash`.
+### Incomplete N-material Allaire implementation
 
-### Smoke-test and MPI-launch failures
+The original multispecies code was only partly generalised. Although some arrays and EOS operations used `nof_species`, important paths remained hard-coded for two materials:
 
-The smoke test originally suffered from several independent problems:
+- The nonconservative volume-fraction source updated only one state variable.
+- Boundary and outflow construction used materials 1 and 2 only.
+- Several profiles initialised only two materials.
+- VTU output assumed a two-material layout.
+- The final dependent volume fraction was not consistently reconstructed for output.
 
-- It appeared after an unconditional early `exit`, so it never ran.
-- It assumed UCNS3D already existed before cloning it.
-- Temporary smoke directories were deleted even when a run failed.
-- A `set -u` cleanup-trap bug made failure handling unreliable.
-- PRRTE reported `prun:exe-not-accessible`, followed by misleading missing-help-file errors.
-- MPI sometimes could not see a usable network interface inside the execution sandbox.
-- The initial success check looked for the wrong output/history pattern.
-- Git LFS pointer files could be copied in place of real meshes.
-- Relative executable paths were unreliable for some MPI launchers.
+The solver was extended across `flow_operations.f90`, `flux_p.f90`, `profile.f90`, and `io.f90` to provide a first-pass N-component implementation. A three-material bubble case was used to expose and correct cases where material 3 remained absent.
 
-The smoke workflow was changed to:
+This work is functional but should not yet be treated as a formally verified general N-material Allaire solver.
 
-- Retain cases under `build/smoke/`, with a `latest` pointer.
-- Launch an absolute path to `ucns3d_p`.
-- Copy the `perf2` inputs into a self-contained run directory.
-- Detect Git LFS mesh pointers.
-- Capture MPI output and exit status.
-- Validate actual solver completion or expected VTU/PVTU timestep output.
-- Test a real one-timestep run, rather than merely successful linking.
+### VTU/PVTU output failures
 
-### The Allaire model was only partially N-material
+Parallel output produced malformed or truncated files, XML headers without appended binary data, temporary files, and sometimes `free(): invalid pointer` or `SIGABRT`. Output mode 5 and the handling of multiple volume fractions also needed correction.
 
-Inspection found that the original code had N-sized arrays and some generalised mixture-EOS loops, but it was not a proper general N-material Allaire implementation.
+Several revisions made VTU writing more robust, restored mode 5 as the intended VTU path, and wrote all N volume fractions, including the reconstructed final fraction. Testing was strengthened to require valid per-rank VTUs/PVTU metadata and actual time stepping.
 
-Important defects included:
+Some invalid-free failures remained specific to the production platform. Likely factors included inconsistent compiler/MPI/dependency builds, OpenMP runtime differences, or latent parallel-I/O memory corruption; the history does not establish one definitive cause for every production failure.
 
-- The nonconservative volume-fraction source was applied to only one hard-coded state index.
-- Boundary/outflow construction used only materials 1 and 2.
-- Profile initialisation repeatedly populated only `mp_ie(1)` and `mp_ie(2)`.
-- Output logic assumed a two-material field layout.
-- Only the `N-1` independent volume fractions were naturally stored, while the requested output needed all `N`, including the reconstructed final fraction.
-- Three-material initialisation initially produced `volume_fraction_3` close to `1e-10` everywhere because the third bubble was not correctly represented in the profile/state construction.
+### Single-rank partitioning
 
-This led to the first N-component generalisation in UCNS3D commit `04b2cbb`, touching:
+`mpirun -np 1` failed because partitioning and communication code assumed a distributed mesh, producing invalid zero indexing. The one-rank path in `communications.f90` and `parts.f90` was corrected so both `-np 1` and `-np 2` reached time stepping.
 
-- `src/flow_operations.f90`
-- `src/flux_p.f90`
-- `src/io.f90`
-- `src/profile.f90`
+### MPI and platform diagnostics
 
-This should still be regarded as an N-component first pass, not a formally verified, publication-grade implementation of the complete N-material Allaire model.
+Other investigated problems included:
 
-### Broken VTU/PVTU output
-
-The output path was one of the largest debugging areas.
-
-Observed failures included:
-
-- Malformed or truncated VTU files.
-- Files containing XML headers but missing appended raw binary data.
-- Tiny `OUT_0.vtu` files.
-- Temporary `.OUT_0.vtu.*` files left behind.
-- `free(): invalid pointer` and `SIGABRT` during output.
-- Behaviour that differed between the local machine and the production platform.
-- Only two volume-fraction fields appearing for a three-material run.
-- Incorrect handling of output mode 5.
-- Parallel output being more fragile than single-process output.
-
-Several passes were made over `io.f90`:
-
-- `ea0fbd1`: synthetic schlieren and associated output changes.
-- `5540e7e`: more robust parallel VTU writing.
-- `cef12d8`: reworked output mode 5 as VTU.
-- Output was amended to write all N volume fractions, reconstructing the final fraction where necessary.
-
-The final successful test criterion was actual time advancement and valid per-rank VTUs plus a PVTU wrapper, rather than the mere existence of an output filename.
-
-### Single-rank partitioning failure
-
-`mpirun -np 1` originally failed during partitioning. This appeared through errors including invalid indexing around the mesh partition arrays, such as:
-
-```text
-Index '0' of dimension 1 of array 'xmpiee' below lower bound of 1
-```
-
-At first this was difficult to separate from:
-
-- Git LFS mesh corruption.
-- Mixed ParMETIS/METIS builds.
-- MPI runtime inconsistency.
-- The multi-rank VTU crash.
-
-A dedicated UCNS3D change fixed the one-rank path:
-
-- Commit `6fbc562` changed `src/communications.f90` and `src/parts.f90`.
-- Single-rank execution was made to bypass or correctly handle distributed partitioning assumptions.
-- Both `-np 1` and `-np 2` were explicitly tested.
-- The single-rank case was confirmed to reach time stepping.
-
-### Production-only MPI/OpenMP failures
-
-The production platform still exposed `SIGABRT`, invalid frees, and stack traces around ParMETIS, VTU output, or `libgomp`.
-
-The investigation established several likely contributors:
-
-- Mixing compiler/MPI families between dependency and solver builds.
-- ParMETIS linking against a different METIS/GKlib build than expected.
-- Build-time and runtime OpenMPI module mismatch.
-- MPI failures being obscured by missing PRRTE help files.
-- OpenMP/runtime behaviour differing between the workstation and cluster.
-- Parallel I/O revealing memory corruption or runtime incompatibility that did not appear locally.
-
-The source was made more defensive, but the project history does not establish one proven root cause for every production-platform invalid-free failure.
+- PRRTE's misleading `prun:exe-not-accessible` output.
+- Missing MPI network interfaces inside the execution sandbox.
+- ParMETIS linked against inconsistent METIS/GKlib builds.
+- Git LFS mesh pointers being mistaken for real mesh files.
+- Differences between local and production compiler, OpenMPI, and `libgomp` environments.
 
 ## 2. UCNS3D features added or expanded
 
-### Generalised N-component support
+### Configurable N-material bubble profile
 
-The solver was extended beyond its effectively two-material assumptions:
+Case 407 was introduced to replace hard-coded bubble definitions. Its `407.nml` namelist supports an arbitrary number of bubbles with configurable properties such as:
 
-- Loops were introduced across material-dependent state and EOS operations.
-- The Allaire nonconservative treatment was expanded across the independent volume fractions.
-- Profiles and output were made aware of more than two materials.
-- Three-material testing was added.
-- VTU output was changed to expose all N volume fractions, including the reconstructed final material fraction.
-
-This is best described as a functional first pass that still needs systematic numerical verification.
-
-### Three-material bubble test
-
-Case 405 was extended during development to include a third material and another circular bubble. This exposed the volume-fraction and output defects and became the practical test for the N-material changes.
-
-### New configurable case 407
-
-A new bubble-profile mode was added so simulations no longer needed bubble geometry and properties hard-coded in `profile.f90`.
-
-The original plain-text `BUBBLE.DAT` idea evolved into a Fortran namelist named `407.nml`.
-
-It allows an arbitrary number of bubbles, with properties including:
-
-- Centre position.
-- Radius or diameter.
+- Centre and size.
 - Material identity.
 - Density.
-- Perturbation mode and amplitude.
-- Other profile controls.
+- Surface perturbation parameters.
 
-Additional changes included:
+Case 407 was made independent of `405.DAT`. The input roles were clarified:
 
-- Case 407 was made independent of `405.DAT`.
-- Required global and freestream inputs were moved into or represented directly by the 407 configuration where appropriate.
-- The distinction between profile geometry and `MULTISPECIES.DAT` thermodynamic material definitions was clarified.
+- `UCNS3D.DAT` controls the solver and numerical methods.
+- `407.nml` defines the initial bubble geometry and state.
+- `MULTISPECIES.DAT` defines material EOS and thermodynamic properties.
 
-The implementation primarily affected:
+### N-component state and output handling
 
-- `src/parameters.f90`
-- `src/profile.f90`
-- `src/declarations.f90`
+Material-dependent operations were expanded to loop over the configured materials. Three-material initialisation was added, and VTU output now exposes all N volume fractions rather than only the `N-1` independently stored variables.
 
-### Synthetic schlieren output
+### Synthetic schlieren
 
-UCNS3D did not originally provide a synthetic schlieren field. It had Q-criterion and shock/troubled-cell sensors, but no density-gradient-based visualisation output.
+A density-gradient-based synthetic schlieren quantity was added to UCNS3D and written to VTU output. A VisIt script, `analysis/schlieren_t0.visit.py`, was added to render the field with an inverted X-ray-style colour map and a view suitable for comparison with experimental images.
 
-A synthetic schlieren capability was added in commit `ea0fbd1`, using a density-gradient-derived quantity suitable for comparison with experimental schlieren imagery. It was written into VTU output so it could be visualised directly in ParaView or VisIt.
+### More robust VTU output and single-rank execution
 
-A companion VisIt script was added at `analysis/schlieren_t0.visit.py`, initially configured to:
+Although driven by bugs, the work also expanded supported workflows:
 
-- Load an `OUT*.vtu` from the working directory.
-- Display the schlieren field.
-- Use an inverted X-ray-style colour map.
-- Apply a consistent view intended to resemble empirical schlieren images.
-- Produce the initial-time image.
+- Output mode 5 was restored as a usable VTU path.
+- Parallel VTU writing was made more defensive.
+- All material volume fractions were exposed for post-processing.
+- Single-rank UCNS3D runs became supported without ParMETIS-style distributed partitioning assumptions.
 
-### Easier bubble input and documentation
+## 3. New Python and workflow features
 
-The UCNS3D fork gained:
+### Mesh generation
 
-- A simpler, self-contained bubble input route.
-- Better defaults and validation around case 407.
-- Top-level instructions explaining the required files and how to run a case.
-- Clearer separation between:
-  - `UCNS3D.DAT`: solver and numerical configuration.
-  - `407.nml`: geometry and initial bubble configuration.
-  - `MULTISPECIES.DAT`: material EOS and thermodynamic definitions.
-  - The mesh and executable.
+A FOSS Python meshing workflow replaced dependence on Pointwise:
 
-## 3. Python features
+- `meshing/make_channel_mesh.py` generates UCNS3D-compatible unstructured channel meshes with local bubble-region refinement and coarser inlet/outlet zones.
+- `meshing/generate_mesh_suites.py` generates both Pointwise-like suites and systematic convergence suites using dataclass-based configurations.
+- Meshes use clean `mesh_<ncells>` names, with convergence progression based on controlled cell-count and edge-length changes.
+- A generated coarse mesh was smoke-tested through a UCNS3D output timestep.
 
-The outer `cfd9` repository contains most of the experiment-facing work.
+### Case and convergence-study generation
 
-### Existing post-processing imported from CFD8
+The convergence setup script was improved to validate inputs, accept an explicit UCNS3D executable, derive reliable names, generate Slurm jobs, and require profile 407.
 
-The initial commit brought forward a broad analysis toolkit, including:
-
-- Interface tracking.
-- Eulerian density plots.
-- Enstrophy and combined-enstrophy plots.
-- Mixing-mass calculations.
-- Mesh-characteristic inspection.
-- Mesh-convergence analysis.
-- WENO comparisons.
-- Temporal pseudocolour plots and montages.
-- Qualitative comparisons through Python and VisIt.
-- PVTU-combination workarounds.
-
-These formed the starting point rather than all being newly written during the IRP phase.
-
-### UCNS3D-compatible mesh generation
-
-`meshing/make_channel_mesh.py` generates UCNS3D/Gmsh-style channel meshes with:
-
-- Unstructured cells rather than a purely regular quad grid.
-- Local refinement around the bubble and interaction region.
-- Coarser inlet and outlet regions.
-- Configurable domain extents and resolution.
-- Boundary definitions suitable for the UCNS3D case.
-
-`meshing/generate_mesh_suites.py` adds:
-
-- A dataclass describing each mesh.
-- Suites approximating the provided Pointwise meshes.
-- A systematic convergence suite.
-- Clean `mesh_<ncells>` naming.
-- Resolution progression based on cell-count doubling, meaning edge length is approximately halved every second mesh.
-- Standalone mesh generation separated from suite orchestration.
-
-A coarse generated mesh was smoke-tested by running UCNS3D through one output timestep.
-
-### Convergence-study preparation
-
-`cases/convergence/convergence1.bash` was expanded to:
-
-- Accept an input repository and optional `ucns3d_p` path.
-- Fall back to an executable in the current directory.
-- Find and stage meshes reliably.
-- Validate that the selected UCNS3D profile is case 407.
-- Derive cleaner directory and Slurm job names.
-- Preserve useful date/time naming.
-- Improve validation and error messages.
-- Generate a complete directory of runnable convergence cases.
-
-The related Python convergence analysis was substantially refactored in `analysis/mesh_convergence.py` to:
-
-- Scan multiple run directories such as `mesh_*`.
-- Extract mesh and solution information.
-- Recreate the existing convergence plots.
-- Reduce unnecessary mesh-reading dependencies where plain-text data already exists.
-- Report a converged physical mesh spacing, which can then be supplied to later case generators even when their total domain sizes differ.
-
-### Haas–Sturtevant case generation
-
-A reproducible setup was built for the 1987 Haas and Sturtevant cylindrical shock–bubble experiments:
-
-- Divergent helium case.
-- Convergent R22 case.
-- Enlarged upstream region to allow clean shock development.
-- Enlarged downstream test region to capture bubble motion and later evolution.
-- Generation of the mesh and all required UCNS3D inputs.
-
-The first case-specific generator was later generalised into `cases/generate_cases.py`.
-
-It supports:
+A general Python case generator, `cases/generate_cases.py`, was then developed. It can create complete UCNS3D cases with:
 
 - Arbitrary numbers of bubbles.
-- Bubble material selection.
-- Explicit density or density derived from material state using `p/(RT)`.
-- Position and diameter.
-- Domain and shock configuration.
-- Mesh resolution specified by physical mean cell width rather than arbitrary total cell count.
-- Strict floating-point configuration fields.
-- Generation of `UCNS3D.DAT`, `407.nml`, `MULTISPECIES.DAT`, scheduler files, documentation, and meshes.
+- Configurable materials, density, location, and diameter.
+- Density inferred from the material state when not explicitly supplied.
+- Configurable domain, shock, and physical mesh spacing.
+- Generated mesh, `UCNS3D.DAT`, `407.nml`, `MULTISPECIES.DAT`, scheduler files, and documentation.
 
-Thin case wrappers were then added:
-
-- `cases/haas_sturtevant/generate_helium.py`
-- `cases/haas_sturtevant/generate_r22.py`
-
-The intention is that the generators are sufficient to regenerate the complete experiment setup, rather than relying on manually retained generated data.
-
-### Water–air convergence example
-
-`cases/convergence/generate_water_air.py` was added as a second physical example:
-
-- Water background.
-- Air bubble.
-- Material properties based on the referenced `10.1063/1.4914133` study.
-- The same systematic convergence-mesh concept used for the earlier gas-bubble cases.
-
-This also exercised the generalised case-generation API with materially different fluids.
+Thin wrappers reproduce the Haas–Sturtevant helium and R22 cylindrical shock–bubble experiments. Their domains include additional upstream shock-development distance and downstream travel distance. A water–air convergence example was also added using material properties from the specified literature case.
 
 ### Run monitoring
 
-`analysis/monitor_runs.py` recursively discovers UCNS3D run directories and reports:
+`analysis/monitor_runs.py` recursively finds UCNS3D cases and reports mesh size and run state. It supports Slurm when available but also works on copied results without Slurm. Existing history, grid, and VTU output files are treated as evidence that a run started, avoiding reliance on marker files alone.
 
-- Directory name.
-- Mesh cell count.
-- Whether a run has started.
-- Running or queued Slurm state where available.
-- Failed completion.
-- Successful completion against the requested final simulation time.
+### Mesh-convergence analysis
 
-It was deliberately made useful away from a cluster:
+`analysis/mesh_convergence.py` was refactored to process collections of `mesh_*` run directories, extract the required data, reproduce convergence plots, and report a converged physical mesh spacing. That spacing can then be used when generating physically different domains.
 
-- Slurm is optional.
-- Copied run directories can still be classified.
-- Existing `OUT*.vtu`, history, grid, and related output artefacts count as evidence that a run started, even if no explicit `start` marker remains.
+### Multi-objective optimisation
 
-### Optimisation with pymoo and Slurm
-
-A first multi-objective optimisation framework was added under `optimisation/`:
+A first UCNS3D optimisation framework was added under `optimisation/`:
 
 - Uses `pymoo`.
-- Is driven by a Python script rather than JSON.
-- Lets users declare parameters and bounds directly in Python.
-- Creates one UCNS3D case or job for each population point.
-- Supports Slurm submission and polling.
-- Keeps Dask out of the initial design.
-- Was verified under Python 3.12 through `uv`.
+- Is configured by a Python driver rather than JSON.
+- Allows users to select parameters and bounds.
+- Creates one UCNS3D/Slurm job per population point.
+- Polls jobs and consumes computed objective metrics.
+- Runs under Python 3.12 through `uv`.
 
-Key files are:
+### Optimisation metrics
 
-- `optimisation/ucns3d_pymoo.py`
-- `optimisation/example_driver.py`
-- `optimisation/README.md`
+`analysis/compute_ucns3d_metrics.py` reads VTU/PVTU time series and writes optimisation-ready JSON containing:
 
-### Objective-metric extraction
+- `Ap95_target`: robust target pressure amplification.
+- `Ip_target`: normalised target pressure impulse.
+- `Mbad_target`: undesirable-material contamination penalty.
+- `Lp_localisation`: optional pressure-localisation ratio.
 
-`analysis/compute_ucns3d_metrics.py` reads UCNS3D VTU/PVTU sequences and emits optimisation-ready JSON.
+It handles configurable fields and regions, cell areas, time metadata and fallbacks, error cases, and debugging metadata. The equations and optimisation directions are documented in `analysis/compute_ucns3d_metrics.README.md`.
 
-It calculates:
+## Repository scope
 
-- `Ap95_target`: maximum target-region 95th-percentile pressure, normalised by incident pressure.
-- `Ip_target`: time-integrated, area-weighted target pressure excess.
-- `Mbad_target`: maximum undesirable-material fraction in the target.
-- `Lp_localisation`: optional fraction of excess pressure localised in the target relative to a larger interaction region.
-
-It includes:
-
-- VTU and PVTU discovery.
-- Time extraction with fallback and warnings.
-- Robust cell-area computation.
-- Box and circular region selection.
-- Configurable pressure and material-field names.
-- Error handling for missing fields, empty regions, bad time sequences, and area failures.
-- Debugging metadata in the output JSON.
-- Integration with the optimisation evaluator.
-
-The mathematics, assumptions, normalisation, and maximise/minimise directions are documented extensively in `analysis/compute_ucns3d_metrics.README.md`.
-
-## Dependency repository status
-
-The nested repositories are:
-
-- `build/GKlib`
-- `build/METIS`
-- `build/ParMETIS`
-- `build/UCNS3D`
-
-Only UCNS3D contains project-specific solver commits. GKlib, METIS, and ParMETIS remain upstream dependency checkouts. Their relevance to this project is the build/link integration and diagnosis of ABI, compiler, and MPI consistency problems, rather than custom algorithms committed inside those repositories.
-
-At the time this history was reconstructed, the outer `cfd9` tree was clean. The only present uncommitted change was `build/UCNS3D/local.bash`, inside the nested UCNS3D repository.
+Project-specific solver changes are in `build/UCNS3D`. The nested GKlib, METIS, and ParMETIS repositories remain upstream dependency checkouts; the project work concerning them was build and linkage integration rather than changes to their algorithms.
