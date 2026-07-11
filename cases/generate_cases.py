@@ -388,7 +388,7 @@ def write_notes(path: Path, config: CaseConfig) -> None:
         f"- Actual centre dx: {(domain.refined_xmax - domain.refined_xmin) / mesh.x_center_cells:.8g} m.",
         f"- Actual dy: {domain.height / mesh.y_cells:.8g} m.",
         f"- Mesh cells: x={mesh.x_cells}, y={mesh.y_cells}, total={mesh.cell_count}.",
-        f"- Shock initially at x = {config.shock_position_x:.8g} m.",
+        f"- Shock initially at x = {config.shock_position_x:.8g} m, travelling right-to-left.",
         f"- Left ambient state: rho = {config.shock.rho1:.8g} kg/m3, p = {config.shock.p1:.8g} Pa, u = {config.shock.u1:.8g} m/s.",
         f"- Right ambient state: rho = {config.shock.rho2:.8g} kg/m3, p = {config.shock.p2:.8g} Pa, u = {config.shock.u2:.8g} m/s.",
         f"- Shock speed magnitude: {config.shock.shock_speed:.8g} m/s.",
@@ -407,6 +407,92 @@ def write_notes(path: Path, config: CaseConfig) -> None:
             f"diameter={bubble.diameter:.8g} m, density={bubble.effective_density:.8g} kg/m3."
         )
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+def case_manifest(config: CaseConfig) -> dict[str, Any]:
+    materials = material_list(config)
+    mesh = config.mesh
+    domain = config.domain
+    return {
+        "name": config.name,
+        "description": config.description,
+        "generated_from": "cases/generate_cases.py",
+        "domain": {
+            "xmin": domain.xmin,
+            "xmax": domain.xmax,
+            "ymin": domain.ymin,
+            "ymax": domain.ymax,
+            "refined_xmin": domain.refined_xmin,
+            "refined_xmax": domain.refined_xmax,
+        },
+        "mesh": {
+            "requested_h": mesh.requested_h,
+            "buffer_factor": mesh.buffer_factor,
+            "x_cells": mesh.x_cells,
+            "y_cells": mesh.y_cells,
+            "x_left_cells": mesh.x_left_cells,
+            "x_center_cells": mesh.x_center_cells,
+            "x_right_cells": mesh.x_right_cells,
+            "cell_count": mesh.cell_count,
+            "actual_dx": (domain.refined_xmax - domain.refined_xmin) / mesh.x_center_cells,
+            "actual_dy": domain.height / mesh.y_cells,
+        },
+        "shock": {
+            "position_x": config.shock_position_x,
+            "left": {
+                "pressure": config.shock.p1,
+                "density": config.shock.rho1,
+                "velocity": config.shock.u1,
+            },
+            "right": {
+                "pressure": config.shock.p2,
+                "density": config.shock.rho2,
+                "velocity": config.shock.u2,
+            },
+            "shock_speed": config.shock.shock_speed,
+        },
+        "materials": [
+            {
+                "name": material.name,
+                "gamma": material.gamma,
+                "density": material.density,
+                "sound_speed": material.sound_speed,
+                "pinf": material.pinf,
+            }
+            for material in materials
+        ],
+        "bubbles": [
+            {
+                "material": bubble.material.name,
+                "center": list(bubble.center),
+                "diameter": bubble.diameter,
+                "density": bubble.effective_density,
+                "pressure": bubble.pressure if bubble.pressure is not None else config.shock.p1,
+                "velocity": list(bubble.velocity),
+                "perturbation_amplitude": bubble.perturbation_amplitude,
+                "perturbation_modes": bubble.perturbation_modes,
+                "perturbation_phase": bubble.perturbation_phase,
+            }
+            for bubble in config.bubbles
+        ],
+        "solver": {
+            "reynolds_number": config.reynolds_number,
+            "cfl": config.cfl,
+            "dt": config.dt,
+            "final_time": config.final_time,
+            "output_interval": config.output_interval,
+            "max_iterations": config.max_iterations,
+            "wall_clock_limit": config.wall_clock_limit,
+            "characteristic_length": config.characteristic_length,
+        },
+    }
+
+
+def write_case_manifest(path: Path, config: CaseConfig) -> None:
+    path.write_text(
+        json.dumps(case_manifest(config), indent=2, sort_keys=True) + "\n",
+        encoding="ascii",
+    )
 
 
 def write_mesh_for_case(path: Path, config: CaseConfig) -> None:
@@ -459,6 +545,7 @@ def generate_case(root: Path, config: CaseConfig) -> Path:
     (case_dir / "UCNS3D.DAT").write_text(ucns3d_dat(config), encoding="ascii")
     write_job_script(case_dir / "ucns3d.jcf", config)
     write_notes(case_dir / "README.md", config)
+    write_case_manifest(case_dir / "case.json", config)
 
     return case_dir
 

@@ -1,0 +1,7 @@
+!------------MULTI-SPECIES DAT FILE-----!
+!--------------UCNS3D-------------------!
+2		!NUMBER OF SPECIES
+4.4, 1.4	!GAMMAS: water, air
+1.0, 0.0	!INFLOW VOLUME FRACTION
+993.89, 1.204	!INFLOW DENSITIES
+6e+08, 0.0	!STIFFENED EOS PRESSURES

@@ -156,7 +156,11 @@ def generate_cases(output_dir: Path, limit: int | None, executable: Path | None,
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("cases/convergence/generated/water_air"))
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "cases" / "convergence" / "generated" / "water_air",
+    )
     parser.add_argument("--limit", type=int, help="Generate only the first N mesh levels.")
     parser.add_argument("--ucns3d", type=Path, help="Optional ucns3d_p executable to symlink into each case.")
     parser.add_argument("--copy-executable", action="store_true", help="Copy ucns3d_p instead of symlinking it.")

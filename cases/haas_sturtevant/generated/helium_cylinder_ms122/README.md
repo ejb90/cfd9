@@ -2,7 +2,7 @@
 
 Divergent helium-cylinder case, figure 7, Ms=1.22.
 
-Generated from `cases/haas_sturtevant/generate_cases.py`.
+Generated from `cases/generate_cases.py`.
 
 Case setup:
 - Domain: x=[-0.35, 0.25], y=[0, 0.089] m.
@@ -12,8 +12,8 @@ Case setup:
 - Actual dy: 0.0005 m.
 - Mesh cells: x=705, y=178, total=125490.
 - Shock initially at x = 0.1 m, travelling right-to-left.
-- Pre-shock ambient: rho = 1.198 kg/m3, p = 101325 Pa, u = 0 m/s.
-- Post-shock ambient: rho = 1.648884 kg/m3, p = 159059.98 Pa, u = -114.76066 m/s.
+- Left ambient state: rho = 1.198 kg/m3, p = 101325 Pa, u = 0 m/s.
+- Right ambient state: rho = 1.648884 kg/m3, p = 159059.98 Pa, u = -114.76066 m/s.
 - Shock speed magnitude: 419.68 m/s.
 
 Materials:
