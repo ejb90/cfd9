@@ -2,6 +2,7 @@
 """Load UCNS3D VTUs with Python VTK and report the density field."""
 
 import glob
+import math
 import re
 import sys
 
@@ -34,6 +35,10 @@ for path in files:
     if density is None:
         sys.exit("%s: no density field" % path)
 
+    density_range = density.GetRange()
+    if not all(math.isfinite(value) for value in density_range) or density_range[0] > density_range[1]:
+        sys.exit("%s: invalid/empty density range %r" % (path, density_range))
+
     print(
         "%s: %d points, %d cells; density on %s: %d values, range %.16g .. %.16g"
         % (
@@ -42,7 +47,7 @@ for path in files:
             grid.GetNumberOfCells(),
             association,
             density.GetNumberOfTuples(),
-            density.GetRange()[0],
-            density.GetRange()[1],
+            density_range[0],
+            density_range[1],
         )
     )
