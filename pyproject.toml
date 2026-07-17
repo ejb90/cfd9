@@ -8,11 +8,12 @@ dependencies = [
     "matplotlib",
     "meshio>=5.3.5",
     "numpy",
-    "pymoo>=0.6.2",
+    "pymoo>=0.6.0",
     "pyqt5",
     "pyvista",
     "rich",
-    "ruff>=0.14.13",
+    "ruff>=0.14.0",
+    "vtk",
 ]
 
 [tool.ruff]

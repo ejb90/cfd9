@@ -21,6 +21,7 @@ class SlurmJob:
     state: str
     workdir: Path | None
     name: str
+    elapsed_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -148,8 +149,26 @@ def has_run_artifacts(run_dir: Path) -> bool:
     return any(next(run_dir.glob(pattern), None) is not None for pattern in artifact_patterns)
 
 
-def query_slurm() -> tuple[dict[Path, SlurmJob], str | None]:
-    command = ["squeue", "-h", "-o", "%i|%T|%Z|%j"]
+def parse_slurm_elapsed(value: str) -> float | None:
+    """Parse Slurm's [[days-]hours:]minutes:seconds elapsed-time format."""
+    try:
+        days_text, separator, time_text = value.strip().partition("-")
+        days = int(days_text) if separator else 0
+        fields = (time_text if separator else days_text).split(":")
+        if len(fields) == 2:
+            hours = 0
+            minutes, seconds = map(int, fields)
+        elif len(fields) == 3:
+            hours, minutes, seconds = map(int, fields)
+        else:
+            return None
+    except ValueError:
+        return None
+    return float(days * 86_400 + hours * 3_600 + minutes * 60 + seconds)
+
+
+def query_slurm(timeout: float = 10.0) -> tuple[dict[Path, SlurmJob], str | None]:
+    command = ["squeue", "-h", "-o", "%i|%T|%Z|%j|%M"]
     try:
         result = subprocess.run(
             command,
@@ -157,9 +176,12 @@ def query_slurm() -> tuple[dict[Path, SlurmJob], str | None]:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=timeout,
         )
     except FileNotFoundError:
         return {}, "squeue not found; running jobs cannot be detected"
+    except subprocess.TimeoutExpired:
+        return {}, f"squeue timed out after {timeout:g} seconds; running jobs cannot be detected"
 
     if result.returncode != 0:
         message = result.stderr.strip() or "squeue failed"
@@ -167,10 +189,14 @@ def query_slurm() -> tuple[dict[Path, SlurmJob], str | None]:
 
     jobs = {}
     for line in result.stdout.splitlines():
-        fields = line.split("|", 3)
-        if len(fields) != 4:
+        fields = line.rsplit("|", 1)
+        if len(fields) != 2:
             continue
-        job_id, state, workdir_text, name = fields
+        job_fields = fields[0].split("|", 3)
+        if len(job_fields) != 4:
+            continue
+        job_id, state, workdir_text, name = job_fields
+        elapsed_seconds = parse_slurm_elapsed(fields[1])
         workdir = None
         if workdir_text and workdir_text != "N/A":
             try:
@@ -178,7 +204,7 @@ def query_slurm() -> tuple[dict[Path, SlurmJob], str | None]:
             except OSError:
                 workdir = Path(workdir_text).absolute()
         if workdir is not None:
-            jobs[workdir] = SlurmJob(job_id, state, workdir, name)
+            jobs[workdir] = SlurmJob(job_id, state, workdir, name, elapsed_seconds)
     return jobs, None
 
 
@@ -284,12 +310,22 @@ def parse_args() -> argparse.Namespace:
         default=1.0e-6,
         help="Relative/absolute tolerance used when comparing last time to target time.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        metavar="SECONDS",
+        help="Timeout for each subprocess command in seconds (default: 10).",
+    )
+    args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be greater than zero")
+    return args
 
 
 def main() -> int:
     args = parse_args()
-    slurm_jobs, slurm_warning = query_slurm()
+    slurm_jobs, slurm_warning = query_slurm(args.timeout)
     run_dirs = find_run_dirs(args.directories)
     rows = [classify_run(run_dir, slurm_jobs, args.tolerance) for run_dir in run_dirs]
 

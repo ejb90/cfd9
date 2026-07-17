@@ -67,6 +67,7 @@ dependencies = [
     { name = "pyvista" },
     { name = "rich" },
     { name = "ruff" },
+    { name = "vtk" },
 ]
 
 [package.metadata]
@@ -74,11 +75,12 @@ requires-dist = [
     { name = "matplotlib" },
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "numpy" },
-    { name = "pymoo", specifier = ">=0.6.2" },
+    { name = "pymoo", specifier = ">=0.6.0" },
     { name = "pyqt5" },
     { name = "pyvista" },
     { name = "rich" },
-    { name = "ruff", specifier = ">=0.14.13" },
+    { name = "ruff", specifier = ">=0.14.0" },
+    { name = "vtk" },
 ]
 
 [[package]]

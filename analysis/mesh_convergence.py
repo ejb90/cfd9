@@ -9,6 +9,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from monitor_runs import (
@@ -35,6 +36,13 @@ PPN = 16
 DEFAULT_OUTPUT = Path("compute_scaling.png")
 
 FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][-+]?\d+)?")
+SBATCH_RE = re.compile(
+    r"^\s*#SBATCH\s+--(?P<option>nodes|ntasks-per-node|cpus-per-task|ntasks)(?:=|\s+)(?P<value>\S+)",
+    re.IGNORECASE,
+)
+SLURM_ENV_RE = re.compile(
+    r"\b(?P<option>SLURM_NNODES|SLURM_JOB_NUM_NODES|SLURM_NTASKS_PER_NODE|SLURM_CPUS_PER_TASK|SLURM_NTASKS)\s*=\s*(?P<value>\S+)",
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,80 @@ class MeshStats:
     ncells: int
     mean_cell_size: float
     mean_cell_size_subset: float
+
+
+def parse_positive_int(text: str) -> int | None:
+    """Extract the leading positive integer from a scheduler resource value."""
+    match = re.search(r"\d+", text)
+    if not match:
+        return None
+    value = int(match.group())
+    return value if value > 0 else None
+
+
+def slurm_layout(values: dict[str, str]) -> tuple[int | None, int | None]:
+    """Return (nodes, cores per node) from Slurm resource values."""
+    nodes = parse_positive_int(values.get("nodes", ""))
+    tasks_per_node = parse_positive_int(values.get("ntasks-per-node", ""))
+    cpus_per_task = parse_positive_int(values.get("cpus-per-task", "")) or 1
+    tasks = parse_positive_int(values.get("ntasks", ""))
+
+    if tasks_per_node:
+        return nodes or 1, tasks_per_node * cpus_per_task
+    if tasks:
+        nodes = nodes or 1
+        return nodes, math.ceil(tasks / nodes) * cpus_per_task
+    return nodes, None
+
+
+def slurm_layout_from_jcf(path: Path) -> tuple[int | None, int | None]:
+    """Read Slurm node and task requests from a job-control file."""
+    values: dict[str, str] = {}
+    with path.open(errors="replace") as handle:
+        for line in handle:
+            match = SBATCH_RE.match(line)
+            if match:
+                values[match.group("option").lower()] = match.group("value")
+    return slurm_layout(values)
+
+
+def slurm_layout_from_output(path: Path) -> tuple[int | None, int | None]:
+    """Read echoed Slurm allocation variables from a scheduler output file."""
+    option_names = {
+        "SLURM_NNODES": "nodes",
+        "SLURM_JOB_NUM_NODES": "nodes",
+        "SLURM_NTASKS_PER_NODE": "ntasks-per-node",
+        "SLURM_CPUS_PER_TASK": "cpus-per-task",
+        "SLURM_NTASKS": "ntasks",
+    }
+    values: dict[str, str] = {}
+    with path.open(errors="replace") as handle:
+        for line in handle:
+            match = SLURM_ENV_RE.search(line)
+            if match:
+                values[option_names[match.group("option")]] = match.group("value")
+    return slurm_layout(values)
+
+
+def timestamp_from_file(path: Path) -> datetime | None:
+    """Read an ISO-8601 timestamp, falling back to the file modification time."""
+    if not path.is_file():
+        return None
+    try:
+        return datetime.fromisoformat(path.read_text(errors="replace").strip())
+    except ValueError:
+        return datetime.fromtimestamp(path.stat().st_mtime)
+
+
+def elapsed_from_run_markers(run_dir: Path) -> float | None:
+    """Estimate elapsed wall time from start and, when available, done markers."""
+    started = timestamp_from_file(run_dir / "start")
+    if started is None:
+        return None
+    finished = timestamp_from_file(run_dir / "done")
+    now = datetime.now(started.tzinfo) if started.tzinfo else datetime.now()
+    elapsed = (finished or now).timestamp() - started.timestamp()
+    return max(elapsed, 0.0)
 
 
 def parse_float(text: str) -> float | None:
@@ -178,7 +260,9 @@ class Run:
         self.stennorm = -1.0
         self.other = -1.0
 
-        self.status_row = classify_run(self.dname, slurm_jobs or {}, tolerance)
+        slurm_jobs = slurm_jobs or {}
+        self.slurm_job = slurm_jobs.get(self.dname)
+        self.status_row = classify_run(self.dname, slurm_jobs, tolerance)
         self.extract_wtime()
         self.extract_timestep()
         self.extract_proccount()
@@ -201,6 +285,14 @@ class Run:
                         value = parse_float(line)
                         if value is not None:
                             self.wtime = value
+        if self.wtime > 0.0:
+            return
+
+        if self.slurm_job and self.slurm_job.elapsed_seconds and self.slurm_job.elapsed_seconds > 0.0:
+            self.wtime = self.slurm_job.elapsed_seconds
+            return
+
+        self.wtime = elapsed_from_run_markers(self.dname) or 0.0
 
     def extract_mesh_data(self, use_vtu: bool, vtu_name: str) -> None:
         stats = mesh_stats_from_vtu(self.dname, vtu_name) if use_vtu else None
@@ -214,14 +306,41 @@ class Run:
         )
 
     def extract_proccount(self) -> None:
+        """Determine the allocation, preferring legacy qsub data when present."""
         fnames = sorted(
             self.dname.glob("mpi_nodes.*"),
             key=lambda path: int(path.suffix[1:]) if path.suffix[1:].isdigit() else -1,
         )
-        if not fnames:
+        if fnames:
+            with fnames[-1].open(errors="replace") as handle:
+                self.nodes = len([line for line in handle if line.strip()])
             return
-        with fnames[-1].open(errors="replace") as handle:
-            self.nodes = len([line for line in handle if line.strip()])
+
+        job_files = [
+            path
+            for pattern in ("*.jcf", "*.sbatch", "*.slurm")
+            for path in sorted(self.dname.glob(pattern))
+            if path.is_file()
+        ]
+        output_files = [
+            path
+            for pattern in ("slurm-*.out", "slurm-*.err", "out", "err")
+            for path in sorted(self.dname.glob(pattern))
+            if path.is_file()
+        ]
+        for parser, paths in (
+            (slurm_layout_from_jcf, job_files),
+            (slurm_layout_from_output, output_files),
+        ):
+            for path in paths:
+                nodes, ppn = parser(path)
+                if nodes is None and ppn is None:
+                    continue
+                if nodes is not None:
+                    self.nodes = nodes
+                if ppn is not None:
+                    self.ppn = ppn
+                return
 
     def extract_finished(self) -> None:
         self.finished_cleanly = self.status_row.status == "success"
