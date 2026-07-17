@@ -59,4 +59,3 @@ for state, label in ((0, "first"), (nstates - 1, "last")):
 DeleteAllPlots()
 CloseDatabase(database)
 print("VTU_VISIT_TEST_PASSED: %d states; rendered first and last" % nstates)
-Exit()

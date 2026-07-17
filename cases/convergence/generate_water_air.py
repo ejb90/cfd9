@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Generate water/air bubble convergence cases.
+"""Generate the Terashima--Tryggvason air-bubble-in-water benchmark.
 
-The mesh levels use the simple total-cell-doubling sequence from
-`meshing/generate_mesh_suites.py`. The case layout keeps the original two-bubble
-He/Kr geometry from the cfd8 inputs, but uses the water/air thermodynamic
-properties from the shock-collapsed air-bubble-in-water setup:
+Physical parameters are from Terashima & Tryggvason (2009), section 4.4,
+pp. 4031--4033, DOI 10.1016/j.jcp.2009.02.023 (reference ``TT09`` below).
+The mesh levels retain the repository's total-cell-doubling sequence, but the
+geometry, material states, time window, and CFL now reproduce that benchmark.
 
-  water: rho=993.89 kg/m3, gamma=4.4, p_inf=6e8 Pa
-  air:   rho=1.204 kg/m3, gamma=1.4, p_inf=0 Pa
+The x-domain is padded relative to TT09 so the existing mesh names and square
+cell progression remain valid. All interaction geometry is unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
-import math
 import shutil
 import sys
 from dataclasses import dataclass
@@ -22,6 +21,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "meshing"))
+
+from generate_mesh_suites import HALVING_SUITE, MeshSpec  # noqa: E402
 
 from cases.generate_cases import (  # noqa: E402
     Bubble,
@@ -32,30 +33,47 @@ from cases.generate_cases import (  # noqa: E402
     ShockState,
     generate_case,
 )
-from generate_mesh_suites import HALVING_SUITE, MeshSpec  # noqa: E402
 
-
-AMBIENT_PRESSURE = 101_325.0
+# TT09 section 4.4: stiffened-gas constants and all three initial states.
+AMBIENT_PRESSURE = 1.0e5
 POST_SHOCK_PRESSURE = 1.0e9
+PRESHOCK_WATER_DENSITY = 1000.0
+POSTSHOCK_WATER_DENSITY = 1323.65
+POSTSHOCK_WATER_VELOCITY = -681.58
 
-WATER = Material("water", gamma=4.4, density=993.89, pinf=6.0e8)
-AIR = Material("air", gamma=1.4, density=1.204, pinf=0.0)
+WATER = Material("water", gamma=4.4, density=PRESHOCK_WATER_DENSITY, pinf=6.0e8)
+AIR = Material("air", gamma=1.4, density=1.0, pinf=0.0)
 
+# TT09 figure 5 and section 4.4: a=6.0 mm, b=1.2 mm, c=1.8 mm,
+# d=15.0 mm, and e=6.0 mm. The published coordinates, with the bubble
+# centred at x=0, are xmin=-9 mm, xmax=6 mm, and shock x=4.2 mm.
+# We add 6 mm upstream and 3 mm downstream padding. This makes the x extent
+# four times the half-domain height, matching HALVING_SUITE's nx/ny ratio and
+# keeping cells approximately square without altering a, b, or the shock.
 DOMAIN = Domain(
-    xmin=-0.25,
-    xmax=0.25,
+    xmin=-0.015,
+    xmax=0.009,
     ymin=0.0,
-    ymax=0.10,
-    refined_xmin=-0.15,
-    refined_xmax=0.15,
+    ymax=0.006,
+    refined_xmin=-0.012,
+    refined_xmax=0.006,
 )
 
-BUBBLE_RADIUS = 0.025
-BUBBLE_DIAMETER = 2.0 * BUBBLE_RADIUS
-BUBBLE_CENTRES = (
-    (-0.05, 0.05, 0.0),
-    (0.05, 0.05, 0.0),
-)
+BUBBLE_DIAMETER = 0.006  # TT09 section 4.4, length a.
+BUBBLE_CENTER = (0.0, 0.0, 0.0)  # TT09 uses the upper half-domain by symmetry.
+SHOCK_POSITION_X = 0.5 * BUBBLE_DIAMETER + 0.0012  # TT09 figure 5, a/2 + b.
+
+# TT09 figure 19 and figure 20 follow the collapse from 0 to 4 microseconds.
+FINAL_TIME = 4.0e-6
+# Derived output choice: 80 equal samples over the published interval and
+# about 43 samples during one D/|shock speed| bubble-crossing time.
+OUTPUT_INTERVAL = 0.05e-6
+
+# TT09 section 4.4 uses the Euler equations. This large required UCNS3D input
+# value makes viscosity negligible if a Navier--Stokes executable is used.
+INVISCID_REYNOLDS_NUMBER = 1.0e12
+# TT09 section 4.4 explicitly reports CFL=0.2 for this calculation.
+CFL = 0.2
 
 
 @dataclass(frozen=True)
@@ -65,29 +83,32 @@ class ConvergenceCase:
 
 
 def water_post_shock_state() -> ShockState:
-    """Return a left-postshock/right-ambient state for the case-407 namelist."""
-    p_ratio = (POST_SHOCK_PRESSURE + WATER.pinf) / (AMBIENT_PRESSURE + WATER.pinf)
-    beta = (WATER.gamma - 1.0) / (WATER.gamma + 1.0)
-    rho_post = WATER.density * (p_ratio + beta) / (beta * p_ratio + 1.0)
-    shock_speed = math.sqrt(
-        (POST_SHOCK_PRESSURE - AMBIENT_PRESSURE)
-        / (WATER.density * (1.0 - WATER.density / rho_post))
+    """Return TT09's left ambient/right post-shock state."""
+    # Derived from TT09's tabulated states by mass conservation across the
+    # shock. ShockState stores a positive speed magnitude.
+    shock_speed = abs(
+        POSTSHOCK_WATER_DENSITY
+        * POSTSHOCK_WATER_VELOCITY
+        / (POSTSHOCK_WATER_DENSITY - PRESHOCK_WATER_DENSITY)
     )
-    particle_speed = shock_speed * (1.0 - WATER.density / rho_post)
     return ShockState(
-        p1=POST_SHOCK_PRESSURE,
-        rho1=rho_post,
-        u1=particle_speed,
-        p2=AMBIENT_PRESSURE,
-        rho2=WATER.density,
-        u2=0.0,
+        p1=AMBIENT_PRESSURE,
+        rho1=PRESHOCK_WATER_DENSITY,
+        u1=0.0,
+        p2=POST_SHOCK_PRESSURE,
+        rho2=POSTSHOCK_WATER_DENSITY,
+        u2=POSTSHOCK_WATER_VELOCITY,
         shock_speed=shock_speed,
     )
 
 
 def mesh_from_spec(spec: MeshSpec) -> MeshResolution:
+    # HALVING_SUITE is a repository-derived convergence sequence. With the
+    # TT09 half-domain height equal to one bubble diameter, y_cells is exactly
+    # the number of cells per diameter. TT09 section 4.4/figure 20 reports
+    # comparison grids at 80, 160, and 240 nodes per diameter.
     return MeshResolution(
-        requested_h=spec.central_h,
+        requested_h=BUBBLE_DIAMETER / spec.y_cells,
         buffer_factor=1.0,
         y_cells=spec.y_cells,
         x_left_cells=spec.x_left_cells,
@@ -100,28 +121,27 @@ def build_case(spec: MeshSpec) -> CaseConfig:
     return CaseConfig(
         name=spec.name,
         description=(
-            "Water-background/air-bubble convergence case. Geometry follows the "
-            "original two-bubble He/Kr setup; material properties follow the "
-            "air-bubble-in-water shock-collapse case."
+            "Terashima--Tryggvason (2009), section 4.4, cylindrical "
+            "air-bubble-in-water shock-collapse convergence case."
         ),
         ambient_material=WATER,
         shock=water_post_shock_state(),
         domain=DOMAIN,
         mesh=mesh_from_spec(spec),
-        shock_position_x=-0.1,
-        final_time=0.000983,
-        output_interval=0.00001,
-        bubbles=tuple(
+        shock_position_x=SHOCK_POSITION_X,
+        final_time=FINAL_TIME,
+        output_interval=OUTPUT_INTERVAL,
+        bubbles=(
             Bubble(
                 material=AIR,
-                center=centre,
+                center=BUBBLE_CENTER,
                 diameter=BUBBLE_DIAMETER,
                 pressure=AMBIENT_PRESSURE,
-            )
-            for centre in BUBBLE_CENTRES
+            ),
         ),
-        characteristic_length=1.0,
-        reynolds_number=3900.0,
+        characteristic_length=BUBBLE_DIAMETER,
+        reynolds_number=INVISCID_REYNOLDS_NUMBER,
+        cfl=CFL,
         job_name=spec.name,
     )
 
@@ -141,7 +161,12 @@ def stage_executable(case_dir: Path, executable: Path, copy: bool) -> None:
         target.symlink_to(source)
 
 
-def generate_cases(output_dir: Path, limit: int | None, executable: Path | None, copy_executable: bool) -> list[ConvergenceCase]:
+def generate_cases(
+    output_dir: Path,
+    limit: int | None,
+    executable: Path | None,
+    copy_executable: bool,
+) -> list[ConvergenceCase]:
     specs = HALVING_SUITE.specs if limit is None else HALVING_SUITE.specs[:limit]
     output_dir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -175,7 +200,8 @@ def main() -> None:
     cases = generate_cases(args.output_dir, args.limit, args.ucns3d, args.copy_executable)
     print(f"{'case':<14} {'cells':>10} {'central_h':>12} path")
     for item in cases:
-        print(f"{item.spec.name:<14} {item.spec.cell_count:>10} {item.spec.central_h:>12.6g} {item.case_dir}")
+        actual_h = BUBBLE_DIAMETER / item.spec.y_cells
+        print(f"{item.spec.name:<14} {item.spec.cell_count:>10} {actual_h:>12.6g} {item.case_dir}")
 
 
 if __name__ == "__main__":

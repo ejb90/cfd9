@@ -108,6 +108,11 @@ class CaseConfig:
     output_interval: float
     bubbles: tuple[Bubble, ...]
     characteristic_length: float
+    # Case wrappers should override Reynolds number and CFL with documented
+    # choices. The remaining defaults are operational UCNS3D safeguards, not
+    # physical benchmark parameters: DTS dt is inactive with explicit RK4,
+    # max_iterations is deliberately non-limiting, and wall_clock_limit is the
+    # five-day limit used by the generated batch script.
     reynolds_number: float = 3900.0
     cfl: float = 1.4
     dt: float = 1.9
@@ -117,6 +122,13 @@ class CaseConfig:
 
 
 def normal_shock_state(mach: float, material: Material, pressure: float) -> ShockState:
+    """Return the ideal-gas normal-shock Rankine--Hugoniot state.
+
+    The pressure and density ratios are the standard perfect-gas relations;
+    see Toro (2009), *Riemann Solvers and Numerical Methods for Fluid
+    Dynamics*, section 3.1, DOI 10.1007/b79761. The particle velocity follows
+    directly from mass conservation in the stationary upstream frame.
+    """
     if material.sound_speed is None:
         raise ValueError(f"sound_speed is required for shock calculation: {material.name}")
     gamma = material.gamma
@@ -264,6 +276,18 @@ def write_407(path: Path, config: CaseConfig) -> None:
 
 
 def ucns3d_dat(config: CaseConfig) -> str:
+    """Render the common solver controls used by all case wrappers.
+
+    The numerical choices follow the UCNS3D formulation documented by
+    Antoniadis et al. (2022), DOI 10.1016/j.cpc.2022.108453: fifth-order WENO
+    reconstruction, HLLC flux, and explicit RK4. HLLC originates with Toro,
+    Spruce & Speares (1994), DOI 10.1007/BF01414629; the WENO and explicit
+    TVD/SSP Runge--Kutta references are Jiang & Shu (1996), DOI
+    10.1006/jcph.1996.0130, and Gottlieb & Shu (1998), DOI
+    10.1090/S0025-5718-98-00913-2. The Prandtl number is inactive for the Euler
+    benchmark executables. Case-specific CFL, Reynolds number, length, final
+    time, and output cadence are referenced in each wrapper module.
+    """
     shock = config.shock
     return f"""====================================================================================================================================================================================================|
 ----------------------------------------------------------------------------------------UCNS3D PARAMETERS-------------------------------------------------------------------------------------------|

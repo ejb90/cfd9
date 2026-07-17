@@ -9,6 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
+# Outputs
+*.pdf
+*.pptx
+*.png
+
 # Test junk
 scripts/run-*
 *.msh
+visitlog.py

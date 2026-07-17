@@ -1,5 +1,5 @@
 &bubble_case
-  shock_position_x = 0.1
+  shock_position_x = 0.05
   left_pressure = 101325.0
   left_velocity = 0.0, 0.0, 0.0
   left_density = 1.198, 3.69
@@ -12,7 +12,7 @@
 /
 
 &bubble
-  bubble_center = 0.0, 0.0445, 0.0
+  bubble_center = 0.0, 0.0, 0.0
   bubble_initial_radius = 0.025
   bubble_perturbation_amplitude = 0.0
   bubble_perturbation_modes = 0

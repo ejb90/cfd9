@@ -1,7 +1,7 @@
 !------------MULTI-SPECIES DAT FILE-----!
 !--------------UCNS3D-------------------!
 2		!NUMBER OF SPECIES
-1.4, 1.48	!GAMMAS: air, helium_mixture
+1.4, 1.4792008	!GAMMAS: air, helium_mixture
 1.0, 0.0	!INFLOW VOLUME FRACTION
 1.198, 0.216	!INFLOW DENSITIES
 0.0, 0.0	!STIFFENED EOS PRESSURES
