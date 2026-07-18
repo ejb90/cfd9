@@ -12,11 +12,36 @@ import sys
 
 
 PLOT_DEFINITIONS = {
-    "density": {"variable": "density", "colour_table": "hot_desaturated", "invert": False},
-    "schlieren": {"variable": "plot_schlieren", "colour_table": "gray", "invert": True},
-    "pressure": {"variable": "pressure", "colour_table": "hot_desaturated", "invert": False},
-    "vorticity": {"variable": "plot_vorticity", "colour_table": "difference", "invert": False},
-    "mixedness": {"variable": "plot_mixedness", "colour_table": "hot_desaturated", "invert": False},
+    "density": {
+        "variable": "density",
+        "colour_table": "hot_desaturated",
+        "invert": False,
+        "legend_title": "Density [kg m^-3]",
+    },
+    "schlieren": {
+        "variable": "plot_schlieren",
+        "colour_table": "gray",
+        "invert": True,
+        "legend_title": "|grad rho| [kg m^-4]",
+    },
+    "pressure": {
+        "variable": "pressure",
+        "colour_table": "hot_desaturated",
+        "invert": False,
+        "legend_title": "Pressure [Pa]",
+    },
+    "vorticity": {
+        "variable": "plot_vorticity",
+        "colour_table": "difference",
+        "invert": False,
+        "legend_title": "Vorticity [s^-1]",
+    },
+    "mixedness": {
+        "variable": "plot_mixedness",
+        "colour_table": "hot_desaturated",
+        "invert": False,
+        "legend_title": "Mixedness [-]",
+    },
 }
 INTERFACE_COLOURS = (
     (230, 85, 13, 255),
@@ -63,24 +88,24 @@ def query_range(label):
     return finite_range(GetQueryOutputValue(), label)
 
 
-def configure_annotations():
+def configure_annotations(show_legends):
     attributes = AnnotationAttributes()
     attributes.axes2D.visible = 0
     attributes.axes3D.visible = 0
     attributes.userInfoFlag = 0
     attributes.databaseInfoFlag = 0
     attributes.timeInfoFlag = 0
-    attributes.legendInfoFlag = 0
+    attributes.legendInfoFlag = 1 if show_legends else 0
     attributes.backgroundMode = attributes.Solid
     attributes.backgroundColor = (255, 255, 255, 255)
     attributes.foregroundColor = (0, 0, 0, 255)
     SetAnnotationAttributes(attributes)
 
 
-def configure_view(bounds):
+def configure_view(bounds, viewport=(0.0, 1.0, 0.0, 1.0)):
     view = View2DAttributes()
     view.windowCoords = tuple(bounds)
-    view.viewportCoords = (0.0, 1.0, 0.0, 1.0)
+    view.viewportCoords = viewport
     view.fullFrameActivationMode = view.Off
     view.windowValid = 1
     SetView2D(view)
@@ -104,10 +129,10 @@ def add_interface_contour(field, cutoff, colour):
         SetPlotOptions(attributes)
 
 
-def configure_pseudocolour(definition, limits):
+def configure_pseudocolour(definition, limits, show_legend):
     attributes = PseudocolorAttributes()
     attributes.colorTableName = definition["colour_table"]
-    attributes.legendFlag = 0
+    attributes.legendFlag = 1 if show_legend else 0
     attributes.minFlag = 1
     attributes.maxFlag = 1
     attributes.min = float(limits[0])
@@ -118,6 +143,32 @@ def configure_pseudocolour(definition, limits):
         pass
     SetPlotOptions(attributes)
     return attributes.colorTableName
+
+
+def configure_legend(plot_index, title, active, separate=False):
+    plot_name = GetPlotList().GetPlots(plot_index).plotName
+    legend = GetAnnotationObject(plot_name)
+    legend.active = 1 if active else 0
+    legend.managePosition = 0
+    legend.position = (0.68, 0.9) if separate else (0.72, 0.88)
+    legend.xScale = 1.0 if separate else 1.5
+    legend.yScale = 1.0 if separate else 1.15
+    legend.orientation = legend.VerticalRight
+    legend.numberFormat = "%.4g"
+    legend.fontHeight = 0.025 if separate else 0.028
+    legend.drawLabels = legend.Values
+    legend.drawTitle = 1
+    legend.drawMinMax = 0
+    legend.controlTicks = 1
+    legend.numTicks = 5
+    legend.drawBoundingBox = 1 if not separate else 0
+    legend.boundingBoxColor = (255, 255, 255, 210)
+    try:
+        legend.useCustomTitle = 1
+        legend.customTitle = title
+    except AttributeError:
+        pass
+    return legend
 
 
 config = load_config()
@@ -177,7 +228,8 @@ missing_native_fields = sorted(required_native_fields.difference(scalars))
 if missing_native_fields:
     fail("required scalar fields are absent: {}".format(missing_native_fields))
 
-configure_annotations()
+legend_mode = config.get("legend_mode", "embedded")
+configure_annotations(legend_mode != "none")
 
 # Probe the common physical view before selecting the output height. By
 # default, the raster aspect ratio follows the requested view and therefore
@@ -220,6 +272,7 @@ manifest = {
     "ambient_field": ambient_field,
     "interface_fields": interface_fields if config["draw_interfaces"] else [],
     "interface_cutoff": config["interface_cutoff"],
+    "legend_mode": legend_mode,
     "plots": {},
 }
 
@@ -244,7 +297,12 @@ for plot_name in config["plots"]:
             limits = [0.0, 1.0]
         else:
             limits = data_range
-    colour_table = configure_pseudocolour(definition, limits)
+    colour_table = configure_pseudocolour(definition, limits, legend_mode != "none")
+    legend = configure_legend(
+        0,
+        definition["legend_title"],
+        active=legend_mode == "embedded",
+    )
 
     if config["draw_interfaces"]:
         for index, field in enumerate(interface_fields):
@@ -261,12 +319,29 @@ for plot_name in config["plots"]:
     if not result:
         fail("SaveWindow failed for {}".format(plot_name))
 
+    legend_file = None
+    if legend_mode == "separate":
+        configure_legend(0, definition["legend_title"], active=True, separate=True)
+        configure_view(view_bounds, viewport=(0.0, 0.62, 0.0, 1.0))
+        tile_width, tile_height = save.width, save.height
+        save.width = 800
+        save.height = 600
+        save.fileName = "{}_{}_legend_source".format(config["prefix"], plot_name)
+        SetSaveWindowAttributes(save)
+        if not SaveWindow():
+            fail("SaveWindow failed for the {} legend".format(plot_name))
+        save.width, save.height = tile_width, tile_height
+        legend.active = 0
+        legend_file = str(output_dir / ("{}_{}_legend.png".format(config["prefix"], plot_name)))
+
     manifest["plots"][plot_name] = {
         "file": str(output_dir / (filename + ".png")),
         "variable": definition["variable"],
         "data_range": data_range,
         "colour_limits": [float(limits[0]), float(limits[1])],
         "colour_table": colour_table,
+        "legend_embedded": legend_mode == "embedded",
+        "legend_file": legend_file,
     }
 
 manifest["bounds"] = [float(value) for value in view_bounds]

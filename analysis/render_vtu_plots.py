@@ -105,6 +105,14 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
         help="overlay volume-fraction contours (default: clean scalar tiles without contours)",
     )
     parser.add_argument(
+        "--legend-mode",
+        choices=("embedded", "separate", "none"),
+        help=(
+            "legend output: embed in every tile, save one image beside each tile, or omit "
+            "(default for a single VTU: embedded)"
+        ),
+    )
+    parser.add_argument(
         "--limits",
         action="append",
         nargs=3,
@@ -115,6 +123,11 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
         "--visit",
         type=Path,
         help="VisIt executable (default: visit on PATH, then /usr/local/visit/bin/visit)",
+    )
+    parser.add_argument(
+        "--magick",
+        type=Path,
+        help="ImageMagick executable used for separate legends (default: magick on PATH)",
     )
     parser.add_argument("--overwrite", action="store_true", help="replace existing tiles and manifest")
 
@@ -163,6 +176,7 @@ def parse_limits(values: list[list[str]] | None, parser_names: tuple[str, ...]) 
 
 def main() -> None:
     args = parse_args()
+    legend_mode = args.legend_mode or "embedded"
     vtu = args.vtu.expanduser().resolve()
     if not vtu.is_file():
         raise SystemExit(f"VTU file does not exist: {vtu}")
@@ -186,6 +200,8 @@ def main() -> None:
         raise SystemExit("--prefix must be a filename prefix, not a path")
 
     expected = [output_dir / f"{prefix}_{name}.png" for name in args.plots]
+    if legend_mode == "separate":
+        expected.extend(output_dir / f"{prefix}_{name}_legend.png" for name in args.plots)
     expected.append(output_dir / f"{prefix}_plots.json")
     collisions = [path for path in expected if path.exists()]
     if collisions and not args.overwrite:
@@ -215,6 +231,7 @@ def main() -> None:
         "interface_components": components,
         "interface_cutoff": args.interface_cutoff,
         "draw_interfaces": args.interfaces,
+        "legend_mode": legend_mode,
         "limits": parse_limits(args.limits, PLOT_NAMES),
         "physical_time": read_vtu_time_value(vtu),
         "output_index": int(match.group(1)) if (match := re.search(r"([0-9]+)$", vtu.stem)) else None,
@@ -239,6 +256,36 @@ def main() -> None:
             str(config_path),
         ]
         completed = subprocess.run(command, check=False, stdin=subprocess.DEVNULL)
+
+    if legend_mode == "separate":
+        magick = args.magick.expanduser().resolve() if args.magick is not None else shutil.which("magick")
+        if magick is None or not Path(magick).is_file():
+            raise SystemExit("separate legends require ImageMagick; pass --magick /path/to/magick")
+        for plot_name in args.plots:
+            source = output_dir / f"{prefix}_{plot_name}_legend_source.png"
+            target = output_dir / f"{prefix}_{plot_name}_legend.png"
+            if not source.is_file():
+                raise SystemExit(f"VisIt did not write the expected legend source: {source}")
+            crop = subprocess.run(
+                [
+                    str(magick),
+                    str(source),
+                    "-crop",
+                    "280x600+520+0",
+                    "+repage",
+                    "-trim",
+                    "+repage",
+                    "-bordercolor",
+                    "white",
+                    "-border",
+                    "12",
+                    str(target),
+                ],
+                check=False,
+            )
+            if crop.returncode:
+                raise SystemExit(f"ImageMagick legend extraction failed for {source}")
+            source.unlink()
     manifest = output_dir / f"{prefix}_plots.json"
     missing_outputs = [path for path in expected if not path.is_file()]
     # VisIt 3.4 maps sys.exit(0) from a startup script to frontend status 250.

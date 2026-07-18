@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -69,12 +70,22 @@ def parse_args() -> argparse.Namespace:
             action.help = "series prefix; child tile prefixes become PREFIX_<VTU stem>"
             break
     args = parser.parse_args()
+    args.legend_mode = args.legend_mode or "embedded"
     if args.max_time_error is not None and args.max_time_error < 0.0:
         parser.error("--max-time-error must be non-negative")
     if args.times is not None and not all(math.isfinite(value) and value >= 0.0 for value in args.times):
         parser.error("--times entries must be finite and non-negative")
     if args.timesteps is not None and any(value < 0 for value in args.timesteps):
         parser.error("--timesteps entries must be non-negative")
+    if args.legend_mode == "separate":
+        fixed_plots = {values[0] for values in args.limits or []}
+        missing_limits = sorted(set(args.plots).difference(fixed_plots | {"mixedness"}))
+        if missing_limits:
+            parser.error(
+                "--legend-mode separate requires fixed --limits for every data-dependent plot; missing: {}".format(
+                    ", ".join(missing_limits)
+                )
+            )
     return args
 
 
@@ -159,7 +170,12 @@ def select_frames(args: argparse.Namespace, run_dir: Path) -> tuple[str, list[di
     return "times", frames
 
 
-def append_render_options(command: list[str], args: argparse.Namespace, child_prefix: str) -> None:
+def append_render_options(
+    command: list[str],
+    args: argparse.Namespace,
+    child_prefix: str,
+    legend_mode: str,
+) -> None:
     command.extend(["--plots", *args.plots, "--prefix", child_prefix, "--width", str(args.width)])
     if args.height is not None:
         command.extend(["--height", str(args.height)])
@@ -177,10 +193,13 @@ def append_render_options(command: list[str], args: argparse.Namespace, child_pr
         command.extend(["--interface-components", *(str(value) for value in args.interface_components)])
     if args.interfaces:
         command.append("--interfaces")
+    command.extend(["--legend-mode", legend_mode])
     for name, lower, upper in args.limits or []:
         command.extend(["--limits", name, lower, upper])
     if args.visit is not None:
         command.extend(["--visit", str(args.visit.expanduser().resolve())])
+    if args.magick is not None:
+        command.extend(["--magick", str(args.magick.expanduser().resolve())])
     if args.overwrite:
         command.append("--overwrite")
 
@@ -223,19 +242,47 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     series_name = f"{args.prefix}_time_series.json" if args.prefix else "time_series.json"
     series_manifest = output_dir / series_name
-    if series_manifest.exists() and not args.overwrite:
-        raise SystemExit(f"series manifest already exists; pass --overwrite to replace it: {series_manifest}")
+    shared_legend_paths = {
+        name: output_dir / (f"{args.prefix}_{name}_legend.png" if args.prefix else f"{name}_legend.png")
+        for name in args.plots
+        if args.legend_mode == "separate"
+    }
+    series_outputs = [series_manifest, *shared_legend_paths.values()]
+    collisions = [path for path in series_outputs if path.exists()]
+    if collisions and not args.overwrite:
+        names = "\n  ".join(str(path) for path in collisions)
+        raise SystemExit(f"series output already exists; pass --overwrite to replace it:\n  {names}")
+    if args.overwrite:
+        for path in collisions:
+            path.unlink()
 
     single_renderer = Path(__file__).with_name("render_vtu_plots.py").resolve()
     rendered_manifests: dict[Path, Path] = {}
-    for path in unique_paths(frames):
+    selected_paths = unique_paths(frames)
+    for index, path in enumerate(selected_paths):
         child_prefix = f"{args.prefix}_{path.stem}" if args.prefix else path.stem
         command = [sys.executable, str(single_renderer), str(path), str(output_dir)]
-        append_render_options(command, args, child_prefix)
+        child_legend_mode = "separate" if args.legend_mode == "separate" and index == 0 else args.legend_mode
+        if args.legend_mode == "separate" and index > 0:
+            child_legend_mode = "none"
+        append_render_options(command, args, child_prefix, child_legend_mode)
         completed = subprocess.run(command, check=False)
         if completed.returncode:
             raise SystemExit(f"rendering failed for {path} with exit status {completed.returncode}")
         rendered_manifests[path] = output_dir / f"{child_prefix}_plots.json"
+
+    shared_legends = {}
+    if args.legend_mode == "separate":
+        first_manifest = json.loads(rendered_manifests[selected_paths[0]].read_text())
+        for name, target in shared_legend_paths.items():
+            source = Path(first_manifest["plots"][name]["legend_file"])
+            if not source.is_file():
+                raise SystemExit(f"shared legend source is missing: {source}")
+            shutil.copy2(source, target)
+            source.unlink()
+            first_manifest["plots"][name]["legend_file"] = str(target)
+            shared_legends[name] = str(target)
+        rendered_manifests[selected_paths[0]].write_text(json.dumps(first_manifest, indent=2, sort_keys=True) + "\n")
 
     for frame in frames:
         manifest_path = rendered_manifests[Path(frame["vtu"])]
@@ -248,6 +295,8 @@ def main() -> None:
         "selector": selector,
         "run_dir": str(run_dir),
         "output_dir": str(output_dir),
+        "legend_mode": args.legend_mode,
+        "legends": shared_legends,
         "frames": frames,
     }
     series_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
