@@ -1,12 +1,12 @@
 &bubble_case
-  shock_position_x = 0.0042
-  left_pressure = 100000.0
-  left_velocity = 0.0, 0.0, 0.0
-  left_density = 1000.0, 1.0
+  shock_position_x = -0.0042
+  left_pressure = 1e+09
+  left_velocity = 681.58, 0.0, 0.0
+  left_density = 1323.65, 1.0
   left_volume_fraction = 1.0, 0.0
-  right_pressure = 1e+09
-  right_velocity = -681.58, 0.0, 0.0
-  right_density = 1323.65, 1.0
+  right_pressure = 100000.0
+  right_velocity = 0.0, 0.0, 0.0
+  right_density = 1000.0, 1.0
   right_volume_fraction = 1.0, 0.0
   bubble_count = 1
 /
@@ -19,6 +19,6 @@
   bubble_perturbation_phase = 0.0
   bubble_pressure = 100000.0
   bubble_velocity = 0.0, 0.0, 0.0
-  bubble_density = 1000.0, 1.0
+  bubble_density = 1323.65, 1.0
   bubble_volume_fraction = 0.0, 1.0
 /

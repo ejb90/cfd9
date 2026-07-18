@@ -39,29 +39,31 @@ AMBIENT_PRESSURE = 1.0e5
 POST_SHOCK_PRESSURE = 1.0e9
 PRESHOCK_WATER_DENSITY = 1000.0
 POSTSHOCK_WATER_DENSITY = 1323.65
-POSTSHOCK_WATER_VELOCITY = -681.58
+POSTSHOCK_WATER_SPEED = 681.58
 
 WATER = Material("water", gamma=4.4, density=PRESHOCK_WATER_DENSITY, pinf=6.0e8)
 AIR = Material("air", gamma=1.4, density=1.0, pinf=0.0)
 
 # TT09 figure 5 and section 4.4: a=6.0 mm, b=1.2 mm, c=1.8 mm,
-# d=15.0 mm, and e=6.0 mm. The published coordinates, with the bubble
-# centred at x=0, are xmin=-9 mm, xmax=6 mm, and shock x=4.2 mm.
-# We add 6 mm upstream and 3 mm downstream padding. This makes the x extent
+# d=15.0 mm, and e=6.0 mm. We mirror the published right-to-left arrangement
+# so profile 407 can place the bubble in its supported right ambient state:
+# shock x=-4.2 mm and post-shock velocity +681.58 m/s. Reflection in x leaves
+# the physical problem unchanged. We then add 3 mm upstream and 6 mm
+# downstream padding. This makes the x extent
 # four times the half-domain height, matching HALVING_SUITE's nx/ny ratio and
 # keeping cells approximately square without altering a, b, or the shock.
 DOMAIN = Domain(
-    xmin=-0.015,
-    xmax=0.009,
+    xmin=-0.009,
+    xmax=0.015,
     ymin=0.0,
     ymax=0.006,
-    refined_xmin=-0.012,
-    refined_xmax=0.006,
+    refined_xmin=-0.006,
+    refined_xmax=0.012,
 )
 
 BUBBLE_DIAMETER = 0.006  # TT09 section 4.4, length a.
 BUBBLE_CENTER = (0.0, 0.0, 0.0)  # TT09 uses the upper half-domain by symmetry.
-SHOCK_POSITION_X = 0.5 * BUBBLE_DIAMETER + 0.0012  # TT09 figure 5, a/2 + b.
+SHOCK_POSITION_X = -(0.5 * BUBBLE_DIAMETER + 0.0012)  # Mirrored TT09 figure 5, -(a/2+b).
 
 # TT09 figure 19 and figure 20 follow the collapse from 0 to 4 microseconds.
 FINAL_TIME = 4.0e-6
@@ -83,21 +85,21 @@ class ConvergenceCase:
 
 
 def water_post_shock_state() -> ShockState:
-    """Return TT09's left ambient/right post-shock state."""
+    """Return TT09's state reflected into left post-shock/right ambient form."""
     # Derived from TT09's tabulated states by mass conservation across the
     # shock. ShockState stores a positive speed magnitude.
     shock_speed = abs(
         POSTSHOCK_WATER_DENSITY
-        * POSTSHOCK_WATER_VELOCITY
+        * POSTSHOCK_WATER_SPEED
         / (POSTSHOCK_WATER_DENSITY - PRESHOCK_WATER_DENSITY)
     )
     return ShockState(
-        p1=AMBIENT_PRESSURE,
-        rho1=PRESHOCK_WATER_DENSITY,
-        u1=0.0,
-        p2=POST_SHOCK_PRESSURE,
-        rho2=POSTSHOCK_WATER_DENSITY,
-        u2=POSTSHOCK_WATER_VELOCITY,
+        p1=POST_SHOCK_PRESSURE,
+        rho1=POSTSHOCK_WATER_DENSITY,
+        u1=POSTSHOCK_WATER_SPEED,
+        p2=AMBIENT_PRESSURE,
+        rho2=PRESHOCK_WATER_DENSITY,
+        u2=0.0,
         shock_speed=shock_speed,
     )
 

@@ -5,15 +5,15 @@ Terashima--Tryggvason (2009), section 4.4, cylindrical air-bubble-in-water shock
 Generated from `cases/generate_cases.py`.
 
 Case setup:
-- Domain: x=[-0.015, 0.009], y=[0, 0.006] m.
-- Refined x band: [-0.012, 0.006] m.
+- Domain: x=[-0.009, 0.015], y=[0, 0.006] m.
+- Refined x band: [-0.006, 0.012] m.
 - Requested refined-region h: 9.375e-06 m.
 - Actual centre dx: 9.375e-06 m.
 - Actual dy: 9.375e-06 m.
 - Mesh cells: x=2560, y=640, total=1638400.
-- Shock initially at x = 0.0042 m, travelling right-to-left.
-- Left ambient state: rho = 1000 kg/m3, p = 100000 Pa, u = 0 m/s.
-- Right ambient state: rho = 1323.65 kg/m3, p = 1e+09 Pa, u = -681.58 m/s.
+- Shock initially at x = -0.0042 m, travelling left-to-right.
+- Left ambient state: rho = 1323.65 kg/m3, p = 1e+09 Pa, u = 681.58 m/s.
+- Right ambient state: rho = 1000 kg/m3, p = 100000 Pa, u = 0 m/s.
 - Shock speed magnitude: 2787.4969 m/s.
 
 Materials:

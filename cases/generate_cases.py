@@ -398,6 +398,7 @@ def write_notes(path: Path, config: CaseConfig) -> None:
     materials = material_list(config)
     mesh = config.mesh
     domain = config.domain
+    shock_direction = "left-to-right" if config.shock.p1 > config.shock.p2 else "right-to-left"
     lines = [
         f"# {config.name}",
         "",
@@ -412,7 +413,7 @@ def write_notes(path: Path, config: CaseConfig) -> None:
         f"- Actual centre dx: {(domain.refined_xmax - domain.refined_xmin) / mesh.x_center_cells:.8g} m.",
         f"- Actual dy: {domain.height / mesh.y_cells:.8g} m.",
         f"- Mesh cells: x={mesh.x_cells}, y={mesh.y_cells}, total={mesh.cell_count}.",
-        f"- Shock initially at x = {config.shock_position_x:.8g} m, travelling right-to-left.",
+        f"- Shock initially at x = {config.shock_position_x:.8g} m, travelling {shock_direction}.",
         f"- Left ambient state: rho = {config.shock.rho1:.8g} kg/m3, p = {config.shock.p1:.8g} Pa, u = {config.shock.u1:.8g} m/s.",
         f"- Right ambient state: rho = {config.shock.rho2:.8g} kg/m3, p = {config.shock.p2:.8g} Pa, u = {config.shock.u2:.8g} m/s.",
         f"- Shock speed magnitude: {config.shock.shock_speed:.8g} m/s.",

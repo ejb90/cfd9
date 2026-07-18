@@ -22,10 +22,10 @@
   ],
   "description": "Terashima--Tryggvason (2009), section 4.4, cylindrical air-bubble-in-water shock-collapse convergence case.",
   "domain": {
-    "refined_xmax": 0.006,
-    "refined_xmin": -0.012,
-    "xmax": 0.009,
-    "xmin": -0.015,
+    "refined_xmax": 0.012,
+    "refined_xmin": -0.006,
+    "xmax": 0.015,
+    "xmin": -0.009,
     "ymax": 0.006,
     "ymin": 0.0
   },
@@ -61,15 +61,15 @@
   "name": "mesh_50963",
   "shock": {
     "left": {
+      "density": 1323.65,
+      "pressure": 1000000000.0,
+      "velocity": 681.58
+    },
+    "position_x": -0.0042,
+    "right": {
       "density": 1000.0,
       "pressure": 100000.0,
       "velocity": 0.0
-    },
-    "position_x": 0.0042,
-    "right": {
-      "density": 1323.65,
-      "pressure": 1000000000.0,
-      "velocity": -681.58
     },
     "shock_speed": 2787.4968855244856
   },
