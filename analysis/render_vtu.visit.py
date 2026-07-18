@@ -69,13 +69,13 @@ def scalar_names(metadata):
     return [metadata.GetScalars(index).name for index in range(metadata.GetNumScalars())]
 
 
-def finite_range(value, label):
+def finite_range(value):
     numbers = [float(item) for item in value]
     if len(numbers) < 2 or not all(math.isfinite(item) for item in numbers[:2]):
-        fail("invalid MinMax query for {}: {}".format(label, value))
+        return None
     lower, upper = numbers[0], numbers[1]
     if lower > upper:
-        fail("reversed MinMax query for {}: {}".format(label, value))
+        return None
     if lower == upper:
         padding = max(abs(lower) * 1.0e-12, 1.0e-12)
         lower -= padding
@@ -83,9 +83,13 @@ def finite_range(value, label):
     return [lower, upper]
 
 
-def query_range(label):
+def query_range(label, allow_invalid=False):
     Query("MinMax")
-    return finite_range(GetQueryOutputValue(), label)
+    value = GetQueryOutputValue()
+    result = finite_range(value)
+    if result is None and not allow_invalid:
+        fail("invalid MinMax query for {}: {}".format(label, value))
+    return result
 
 
 def configure_annotations(show_legends):
@@ -188,7 +192,8 @@ volume_fraction_fields = sorted(
 if len(volume_fraction_fields) < 2:
     fail("at least two numbered volume-fraction fields are required; found {}".format(volume_fraction_fields))
 
-if "schlieren" in scalars:
+schlieren_uses_native = "schlieren" in scalars
+if schlieren_uses_native:
     DefineScalarExpression("plot_schlieren", "<schlieren>")
 else:
     DefineScalarExpression("plot_schlieren", "magnitude(gradient(<density>))")
@@ -284,7 +289,19 @@ for plot_name in config["plots"]:
     if not DrawPlots():
         fail("could not draw {} pseudocolour plot".format(plot_name))
     SetActivePlots(0)
-    data_range = query_range(plot_name)
+    data_range = query_range(plot_name, allow_invalid=plot_name == "schlieren" and schlieren_uses_native)
+    if data_range is None:
+        # Some solver outputs contain non-finite values in their stored
+        # schlieren array.  Recompute the diagnostic from density so a bad
+        # native diagnostic cannot prevent the other plot tiles from being
+        # rendered.
+        DeleteAllPlots()
+        DefineScalarExpression("plot_schlieren", "magnitude(gradient(<density>))")
+        schlieren_uses_native = False
+        if not AddPlot("Pseudocolor", definition["variable"], 1, 0) or not DrawPlots():
+            fail("could not draw fallback schlieren pseudocolour plot")
+        SetActivePlots(0)
+        data_range = query_range(plot_name)
 
     limits = config["limits"].get(plot_name)
     if limits is None:

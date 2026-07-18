@@ -102,7 +102,9 @@ Change the optional contour with `--interface-cutoff F`.
 
 - Density and pressure use the native VTU fields.
 - Schlieren uses the native `schlieren` field when present and otherwise
-  evaluates `magnitude(gradient(<density>))` in VisIt.
+  evaluates `magnitude(gradient(<density>))` in VisIt. If the native field has
+  a non-finite range, the renderer automatically retries with that density-gradient
+  expression.
 - Vorticity evaluates `curl({<u>,<v>,0*<u>})`; for a 2D mesh VisIt returns the
   signed out-of-plane component.
 - For `N` material volume fractions, mixedness is
