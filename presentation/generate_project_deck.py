@@ -89,6 +89,24 @@ def card(slide, heading, body, x, y, w, h, accent=BLUE):
     add_text(slide, body, x + 0.25, y + 0.67, w - 0.45, h - 0.82, 12.5, DARK)
 
 
+def placeholder(slide, heading, detail, x, y, w, h, accent=CYAN):
+    """Add a deliberately obvious slot for a figure or table added later."""
+    compact = h < 2.2
+    heading_y = y + (0.22 if compact else 0.32)
+    detail_y = y + (0.68 if compact else 0.9)
+    detail_h = h - (0.82 if compact else 1.2)
+    rect(slide, x, y, w, h, LIGHT, MID)
+    slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y),
+                           Inches(w), Inches(0.08)).fill.solid()
+    slide.shapes[-1].fill.fore_color.rgb = accent
+    slide.shapes[-1].line.fill.background()
+    add_text(slide, heading, x + 0.25, heading_y, w - 0.5, 0.34,
+             13 if compact else 15, accent, True, PP_ALIGN.CENTER)
+    add_text(slide, detail, x + 0.35, detail_y, w - 0.7, detail_h,
+             10.5 if compact else 12.5, DARK, False, PP_ALIGN.CENTER,
+             valign=MSO_ANCHOR.MIDDLE)
+
+
 def code_image(source: Path, start: int, end: int, out: Path, language: str):
     lines = source.read_text().splitlines()
     code = "\n".join(f"{i:>4}  {lines[i-1]}" for i in range(start, min(end, len(lines)) + 1))
@@ -270,8 +288,73 @@ def build() -> None:
         card(s, "Mbad_target ↓", "Maximum unwanted-material fraction in the desired compression region.", 8.15, 4.35, 4.4, 1.15, RED)
         card(s, "Lp_localisation ↑", "Optional ratio of target excess pressure to the larger interaction region.", 8.15, 5.75, 4.4, 1.15, ORANGE)
 
-        # 12 — status
-        s = prs.slides.add_slide(blank); title(s, "Where the project stands", "OUTCOMES + NEXT VALIDATION", 14)
+        # 12 — water-air mesh convergence
+        s = prs.slides.add_slide(blank)
+        title(s, "Mesh convergence of the water–air case", "INTERFACE-TRAJECTORY STUDY", 14)
+        placeholder(
+            s,
+            "INSERT CONVERGENCE FIGURE",
+            "Overlay upstream, downstream, and jet positions for the selected mesh resolutions\n\n"
+            "Suggested axes: interface position x/D against time t\n"
+            "Interface definition: air volume fraction α = 0.5",
+            0.7, 1.5, 7.45, 4.95, BLUE,
+        )
+        placeholder(
+            s,
+            "INSERT MESH TABLE",
+            "Resolution  |  Δx  |  cells per D  |  total cells  |  change from next-finer mesh",
+            8.45, 1.5, 4.15, 1.75, ORANGE,
+        )
+        card(
+            s,
+            "Convergence decision",
+            "Report the coarsest spacing for which the tracked interfaces and jet timing change "
+            "negligibly relative to the next-finer mesh. Use that physical spacing for subsequent cases.",
+            8.45, 3.55, 4.15, 2.2, GREEN,
+        )
+        add_text(
+            s,
+            "Case basis: Terashima & Tryggvason (2009) • 6 mm air bubble in water • "
+            "corrected 1 GPa incident-shock setup",
+            0.8, 6.72, 11.9, 0.3, 10.5, MID, False, PP_ALIGN.CENTER,
+        )
+
+        # 13 — Haas–Sturtevant empirical validation
+        s = prs.slides.add_slide(blank)
+        title(s, "Haas–Sturtevant validation", "CYLINDRICAL SHOCK–BUBBLE BENCHMARK • Mₛ = 1.22", 15)
+        placeholder(
+            s,
+            "HELIUM: INSERT MATCHED IMAGE SEQUENCE",
+            "Experimental schlieren and numerical density/schlieren frames\n"
+            "Use identical crop and labelled comparison times",
+            0.7, 1.5, 5.95, 3.45, BLUE,
+        )
+        placeholder(
+            s,
+            "R22: INSERT MATCHED IMAGE SEQUENCE",
+            "Experimental schlieren and numerical density/schlieren frames\n"
+            "Use identical crop and labelled comparison times",
+            6.85, 1.5, 5.75, 3.45, ORANGE,
+        )
+        placeholder(
+            s,
+            "INSERT QUANTITATIVE COMPARISON TABLE",
+            "Gas  |  event/frame  |  experiment time  |  simulation time  |  difference\n"
+            "Optional metrics: interface position, compression, jet onset, shock transit",
+            0.7, 5.25, 8.0, 1.25, GREEN,
+        )
+        card(
+            s,
+            "What to conclude",
+            "Separate agreement in event timing from agreement in morphology; note the effect of "
+            "density contrast between helium and R22.",
+            8.95, 5.25, 3.65, 1.25, RED,
+        )
+        add_text(s, "Reference: Haas & Sturtevant (1987), Journal of Fluid Mechanics 181",
+                 0.8, 6.78, 11.9, 0.25, 10.5, MID, False, PP_ALIGN.CENTER)
+
+        # 14 — status
+        s = prs.slides.add_slide(blank); title(s, "Where the project stands", "OUTCOMES + NEXT VALIDATION", 16)
         card(s, "Working", "Reproducible build and smoke path; case 407; N-field output; synthetic schlieren; meshing/case generation; monitoring; optimisation bridge.", 0.7, 1.55, 3.8, 3.1, GREEN)
         card(s, "Needs validation", "Formal N-material Allaire verification; conservation tests; reference solutions; cross-platform VTU stress testing.", 4.78, 1.55, 3.8, 3.1, ORANGE)
         card(s, "Remaining risk", "Production-only invalid frees suggest toolchain/runtime mismatch or latent parallel-I/O corruption.", 8.86, 1.55, 3.8, 3.1, RED)

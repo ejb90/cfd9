@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import pickle
+import shlex
 import shutil
+import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -55,6 +59,30 @@ class Evaluation:
 
 CaseFactory = Callable[[dict[str, float], int], CaseConfig]
 ObjectiveFunction = Callable[[Path, dict[str, float]], Sequence[float]]
+
+
+class CampaignStoppedError(RuntimeError):
+    """Raised after Slurm asks the serial optimisation controller to stop."""
+
+
+_STOP_REQUESTED = False
+
+
+def _request_stop(signum: int, _frame: object) -> None:
+    global _STOP_REQUESTED
+    _STOP_REQUESTED = True
+    print(f"received signal {signum}; stopping the optimisation controller", flush=True)
+
+
+def install_stop_handler() -> None:
+    """Handle the advance warning sent before the controller wall-time limit."""
+    for signal_name in ("SIGUSR1", "SIGTERM", "SIGINT"):
+        if hasattr(signal, signal_name):
+            signal.signal(getattr(signal, signal_name), _request_stop)
+
+
+def stop_requested() -> bool:
+    return _STOP_REQUESTED
 
 
 def parameter_dict(parameters: Sequence[Parameter], x: Sequence[float]) -> dict[str, float]:
@@ -119,6 +147,85 @@ def write_slurm_script(run_dir: Path, settings: SlurmSettings, job_name: str) ->
     return script
 
 
+def write_controller_script(
+    *,
+    driver: Path,
+    argv: Sequence[str],
+    work_dir: Path,
+    wall_time: str = "72:00:00",
+    partition: str = "serial",
+) -> Path:
+    """Write the one-core Slurm job which owns the optimiser and submits evaluations."""
+    driver = driver.resolve()
+    work_dir = work_dir.resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    forwarded = [argument for argument in argv if argument not in {"--launch", "--launch-controller"}]
+    if "--submit" not in forwarded:
+        forwarded.append("--submit")
+    command = shlex.join([sys.executable, str(driver), *forwarded])
+    lines = [
+        "#!/usr/bin/env bash",
+        "#SBATCH --job-name=optimisation-controller",
+        "#SBATCH --comment=UCNS3D",
+        "#SBATCH --nodes=1",
+        "#SBATCH --ntasks-per-node=1",
+        "#SBATCH --cpus-per-task=1",
+        "#SBATCH --output=controller-%j.out",
+        "#SBATCH --error=controller-%j.err",
+        f"#SBATCH --time={wall_time}",
+        "#SBATCH --mem-bind=local",
+        f"#SBATCH --partition={partition}",
+        "#SBATCH --mem=0",
+        "#SBATCH --signal=B:USR1@300",
+        "",
+        "set -euo pipefail",
+        "",
+        "date -Iseconds > controller-start",
+        "",
+        "module purge",
+        "module load gcc/12.3.0",
+        "module load openmpi/4.1.6",
+        "",
+        f"cd {shlex.quote(str(driver.parents[1]))}",
+        f"exec {command}",
+        "",
+    ]
+    script = work_dir / "optimisation-controller.jcf"
+    script.write_text("\n".join(lines), encoding="ascii")
+    script.chmod(0o755)
+    return script
+
+
+def launch_controller(
+    *,
+    driver: Path,
+    argv: Sequence[str],
+    work_dir: Path,
+    wall_time: str = "72:00:00",
+    partition: str = "serial",
+) -> str:
+    """Write and submit the serial optimisation controller job."""
+    script = write_controller_script(
+        driver=driver,
+        argv=argv,
+        work_dir=work_dir,
+        wall_time=wall_time,
+        partition=partition,
+    )
+    result = subprocess.run(
+        ["sbatch", "--parsable", script.name],
+        cwd=script.parent,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"controller sbatch failed: {result.stderr.strip()}")
+    job_id = result.stdout.strip().split(";", 1)[0]
+    (script.parent / "controller_job_id").write_text(job_id + "\n", encoding="ascii")
+    return job_id
+
+
 def prepare_evaluation(
     *,
     index: int,
@@ -150,8 +257,7 @@ def submit(evaluation: Evaluation) -> Evaluation:
         ["sbatch", "--parsable", "run_ucns3d.sbatch"],
         cwd=evaluation.run_dir,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if result.returncode != 0:
@@ -174,8 +280,7 @@ def running_job_ids(job_ids: set[str]) -> set[str]:
     result = subprocess.run(
         ["squeue", "-h", "-o", "%i"],
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if result.returncode != 0:
@@ -184,12 +289,56 @@ def running_job_ids(job_ids: set[str]) -> set[str]:
     return job_ids & active
 
 
-def wait_for_jobs(evaluations: Sequence[Evaluation], poll_interval: float) -> None:
-    pending = {evaluation.job_id for evaluation in evaluations if evaluation.job_id is not None}
-    while pending:
-        pending = running_job_ids(pending)
-        if pending:
-            time.sleep(poll_interval)
+def cancel_jobs(evaluations: Sequence[Evaluation]) -> None:
+    """Cancel evaluation jobs still owned by this controller."""
+    job_ids = [evaluation.job_id for evaluation in evaluations if evaluation.job_id is not None]
+    if not job_ids:
+        return
+    result = subprocess.run(
+        ["scancel", *job_ids],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"warning: scancel failed: {result.stderr.strip()}", file=sys.stderr, flush=True)
+
+
+def submit_and_wait(
+    evaluations: Sequence[Evaluation],
+    *,
+    max_concurrent: int | None,
+    poll_interval: float,
+) -> list[Evaluation]:
+    """Submit evaluations with a rolling concurrency limit and wait for all of them."""
+    limit = max_concurrent or len(evaluations)
+    waiting = list(evaluations)
+    submitted: list[Evaluation] = []
+    active: dict[str, Evaluation] = {}
+
+    try:
+        while waiting or active:
+            if stop_requested():
+                raise CampaignStoppedError
+
+            while waiting and len(active) < limit:
+                evaluation = submit(waiting.pop(0))
+                if evaluation.job_id is None:
+                    raise RuntimeError(f"sbatch returned no job ID for {evaluation.run_dir}")
+                submitted.append(evaluation)
+                active[evaluation.job_id] = evaluation
+
+            if active:
+                time.sleep(poll_interval)
+                if stop_requested():
+                    raise CampaignStoppedError
+                running = running_job_ids(set(active))
+                active = {job_id: evaluation for job_id, evaluation in active.items() if job_id in running}
+    except CampaignStoppedError:
+        cancel_jobs(list(active.values()))
+        raise
+
+    return submitted
 
 
 def evaluate_finished(
@@ -229,6 +378,57 @@ def algorithm_from_name(name: str, population: int):
     raise ValueError(f"unknown algorithm: {name}")
 
 
+def save_checkpoint(
+    path: Path,
+    *,
+    algorithm: object,
+    next_generation: int,
+    evaluation_index: int,
+    parameters: Sequence[Parameter],
+    n_obj: int,
+    population: int,
+    algorithm_name: str,
+) -> None:
+    """Atomically save the optimiser after a completed generation."""
+    payload = {
+        "algorithm": algorithm,
+        "next_generation": next_generation,
+        "evaluation_index": evaluation_index,
+        "parameters": tuple((parameter.name, parameter.lower, parameter.upper) for parameter in parameters),
+        "n_obj": n_obj,
+        "population": population,
+        "algorithm_name": algorithm_name,
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("wb") as handle:
+        pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    temporary.replace(path)
+
+
+def load_checkpoint(
+    path: Path,
+    *,
+    parameters: Sequence[Parameter],
+    n_obj: int,
+    population: int,
+    algorithm_name: str,
+) -> tuple[object, int, int]:
+    """Load a checkpoint and reject incompatible study definitions."""
+    with path.open("rb") as handle:
+        payload = pickle.load(handle)  # noqa: S301 - checkpoint is a trusted local campaign file.
+    expected_parameters = tuple((parameter.name, parameter.lower, parameter.upper) for parameter in parameters)
+    checks = {
+        "parameters": expected_parameters,
+        "n_obj": n_obj,
+        "population": population,
+        "algorithm_name": algorithm_name,
+    }
+    for key, expected in checks.items():
+        if payload.get(key) != expected:
+            raise ValueError(f"checkpoint {key} does not match this study: {payload.get(key)!r} != {expected!r}")
+    return payload["algorithm"], int(payload["next_generation"]), int(payload["evaluation_index"])
+
+
 def run_optimisation(
     *,
     parameters: Sequence[Parameter],
@@ -246,11 +446,14 @@ def run_optimisation(
     poll_interval: float = 60.0,
     max_concurrent: int | None = None,
     failure_penalty: float = 1.0e30,
+    resume: bool = False,
 ) -> None:
     from pymoo.core.problem import Problem
 
     if prepare_only and submit_jobs:
         raise ValueError("prepare_only and submit_jobs are mutually exclusive")
+    if prepare_only and resume:
+        raise ValueError("prepare_only and resume are mutually exclusive")
     if not prepare_only and not submit_jobs:
         raise ValueError("pass --prepare-only to generate cases for inspection, or --submit to run them through Slurm")
     if generations < 1:
@@ -265,17 +468,50 @@ def run_optimisation(
         raise ValueError("poll_interval must be positive")
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    problem = Problem(
-        n_var=len(parameters),
-        n_obj=n_obj,
-        xl=np.array([parameter.lower for parameter in parameters], dtype=float),
-        xu=np.array([parameter.upper for parameter in parameters], dtype=float),
-    )
-    algorithm = algorithm_from_name(algorithm_name, population)
-    algorithm.setup(problem, seed=seed, verbose=False)
+    checkpoint = work_dir / "optimiser-checkpoint.pkl"
+    if resume:
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"no optimiser checkpoint found: {checkpoint}")
+        algorithm, first_generation, evaluation_index = load_checkpoint(
+            checkpoint,
+            parameters=parameters,
+            n_obj=n_obj,
+            population=population,
+            algorithm_name=algorithm_name,
+        )
+        print(f"resuming at generation {first_generation}", flush=True)
+    else:
+        if checkpoint.exists() and not prepare_only:
+            raise FileExistsError(
+                f"checkpoint already exists; pass --resume or choose another --work-dir: {checkpoint}"
+            )
+        problem = Problem(
+            n_var=len(parameters),
+            n_obj=n_obj,
+            xl=np.array([parameter.lower for parameter in parameters], dtype=float),
+            xu=np.array([parameter.upper for parameter in parameters], dtype=float),
+        )
+        algorithm = algorithm_from_name(algorithm_name, population)
+        algorithm.setup(problem, seed=seed, verbose=False)
+        first_generation = 0
+        evaluation_index = 0
+        if not prepare_only:
+            save_checkpoint(
+                checkpoint,
+                algorithm=algorithm,
+                next_generation=first_generation,
+                evaluation_index=evaluation_index,
+                parameters=parameters,
+                n_obj=n_obj,
+                population=population,
+                algorithm_name=algorithm_name,
+            )
 
-    evaluation_index = 0
-    for generation in range(generations):
+    install_stop_handler()
+    for generation in range(first_generation, generations):
+        if stop_requested():
+            print("controller stop requested before starting another generation", flush=True)
+            return
         infill = algorithm.ask()
         x_batch = np.asarray(infill.get("X"), dtype=float)
         evaluations = [
@@ -298,18 +534,34 @@ def run_optimisation(
             return
 
         if submit_jobs:
-            submitted = []
-            limit = max_concurrent or len(evaluations)
-            for start in range(0, len(evaluations), limit):
-                wave = [submit(evaluation) for evaluation in evaluations[start : start + limit]]
-                submitted.extend(wave)
-                wait_for_jobs(wave, poll_interval)
-            evaluations = submitted
+            try:
+                evaluations = submit_and_wait(
+                    evaluations,
+                    max_concurrent=max_concurrent,
+                    poll_interval=poll_interval,
+                )
+            except CampaignStoppedError:
+                print(
+                    "controller wall time is ending; active evaluations were cancelled and the last completed "
+                    "generation remains checkpointed",
+                    flush=True,
+                )
+                return
         f_batch = evaluate_finished(evaluations, parameters, objective, n_obj, failure_penalty)
         infill.set("F", f_batch)
         algorithm.tell(infills=infill)
         np.savetxt(work_dir / f"generation_{generation:04d}_X.csv", x_batch, delimiter=",")
         np.savetxt(work_dir / f"generation_{generation:04d}_F.csv", f_batch, delimiter=",")
+        save_checkpoint(
+            checkpoint,
+            algorithm=algorithm,
+            next_generation=generation + 1,
+            evaluation_index=evaluation_index,
+            parameters=parameters,
+            n_obj=n_obj,
+            population=population,
+            algorithm_name=algorithm_name,
+        )
         print(f"finished generation {generation}: {len(evaluations)} evaluations")
 
 
@@ -321,9 +573,18 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--submit", action="store_true", help="Submit each generated case with sbatch.")
+    parser.add_argument(
+        "--launch-controller",
+        "--launch",
+        action="store_true",
+        help="Submit this driver as a three-day, one-core serial Slurm controller job.",
+    )
+    parser.add_argument("--controller-time", default="72:00:00")
+    parser.add_argument("--controller-partition", default="serial")
     parser.add_argument("--poll-interval", type=float, default=60.0)
     parser.add_argument("--max-concurrent", type=int)
     parser.add_argument("--failure-penalty", type=float, default=1.0e30)
+    parser.add_argument("--resume", action="store_true", help="Resume from the last completed-generation checkpoint.")
     parser.add_argument("--ucns3d", type=Path, help="Path to ucns3d_p; symlinked into each run directory.")
     parser.add_argument("--copy-executable", action="store_true")
     parser.add_argument("--command", default="srun -n 2 ./ucns3d_p")

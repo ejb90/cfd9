@@ -27,6 +27,7 @@ from cases.generate_cases import (  # noqa: E402
 from optimisation.ucns3d_pymoo import (  # noqa: E402
     Parameter,
     add_common_arguments,
+    launch_controller,
     run_optimisation,
     slurm_from_args,
 )
@@ -79,7 +80,7 @@ def make_case(values: dict[str, float], evaluation_index: int) -> CaseConfig:
     )
 
 
-def objective(run_dir: Path, values: dict[str, float]) -> tuple[float, float]:
+def objective(run_dir: Path, values: dict[str, float]) -> tuple[float, float, float]:
     """Return pymoo minimisation objectives from UCNS3D VTU/PVTU metrics."""
     metrics = write_metrics_json(
         {
@@ -120,6 +121,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.launch_controller:
+        if args.prepare_only:
+            raise ValueError("--launch-controller cannot be combined with --prepare-only")
+        job_id = launch_controller(
+            driver=Path(__file__),
+            argv=sys.argv[1:],
+            work_dir=args.work_dir,
+            wall_time=args.controller_time,
+            partition=args.controller_partition,
+        )
+        print(f"submitted optimisation controller job {job_id}")
+        print(f"controller script: {(args.work_dir / 'optimisation-controller.jcf').resolve()}")
+        return
     run_optimisation(
         parameters=PARAMETERS,
         make_case=make_case,
@@ -136,6 +150,7 @@ def main() -> None:
         poll_interval=args.poll_interval,
         max_concurrent=args.max_concurrent,
         failure_penalty=args.failure_penalty,
+        resume=args.resume,
     )
 
 
