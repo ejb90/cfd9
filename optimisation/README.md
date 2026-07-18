@@ -5,10 +5,10 @@ controller owns the `pymoo` optimiser, generates UCNS3D cases, submits the
 parallel evaluation jobs, polls Slurm, post-processes completed solutions, and
 passes their objective values back to `pymoo`.
 
-The controller job is deliberately simple. It uses the same module setup and
-general JCF layout as the generated `ucns3d.jcf` files, but requests one task on
-the `serial` partition for 72 hours. The UCNS3D evaluations retain their own
-parallel Slurm settings.
+The controller job is deliberately simple. It requests one task on the
+`serial` partition for 72 hours. Each evaluation is submitted with the
+`ucns3d.jcf` generated in that evaluation directory; edit the shared case
+generator if its parallel Slurm settings need to change.
 
 ## Study definition
 
@@ -94,11 +94,7 @@ uv run python optimisation/water_air_single_bubble_driver.py \
   --poll-interval 300 \
   --seed 7 \
   --work-dir optimisation_runs/water_air_single \
-  --ucns3d build/UCNS3D/src/ucns3d_p \
-  --command 'time srun.awe -np "${SLURM_NTASKS:-128}" ./ucns3d_p' \
-  --ntasks 128 \
-  --job-time 72:00:00 \
-  --partition parallel
+  --ucns3d build/UCNS3D/src/ucns3d_p
 ```
 
 ## Inspect cases without Slurm
@@ -128,11 +124,7 @@ uv run python optimisation/example_driver.py \
   --max-concurrent 16 \
   --poll-interval 300 \
   --work-dir optimisation_runs/two_bubbles \
-  --ucns3d build/UCNS3D/src/ucns3d_p \
-  --command 'time srun.awe -np "${SLURM_NTASKS:-128}" ./ucns3d_p' \
-  --ntasks 128 \
-  --job-time 72:00:00 \
-  --partition parallel
+  --ucns3d build/UCNS3D/src/ucns3d_p
 ```
 
 `--launch-controller` writes
@@ -226,9 +218,7 @@ uv run python optimisation/example_driver.py \
   --max-concurrent 16 \
   --poll-interval 300 \
   --work-dir optimisation_runs/two_bubbles \
-  --ucns3d build/UCNS3D/src/ucns3d_p \
-  --ntasks 128 \
-  --partition parallel
+  --ucns3d build/UCNS3D/src/ucns3d_p
 ```
 
 Here `--generations` is the total target generation number, not the number of
