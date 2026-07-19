@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import pickle
+import re
 import shlex
 import shutil
 import signal
@@ -59,6 +60,20 @@ class CampaignStoppedError(RuntimeError):
 
 
 _STOP_REQUESTED = False
+
+
+def evaluation_wall_time_seconds(value: str) -> int:
+    """Parse the optimisation evaluation limit in Slurm ``[D-]HH:MM:SS`` form."""
+    match = re.fullmatch(r"(?:(\d+)-)?(\d+):(\d{2}):(\d{2})", value)
+    if match is None:
+        raise ValueError("--evaluation-time must use [D-]HH:MM:SS, for example 02:30:00 or 1-00:00:00")
+    days, hours, minutes, seconds = (int(item) if item is not None else 0 for item in match.groups())
+    if minutes > 59 or seconds > 59:
+        raise ValueError("--evaluation-time minutes and seconds must each be below 60")
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    if total < 1:
+        raise ValueError("--evaluation-time must be positive")
+    return total
 
 
 def _request_stop(signum: int, _frame: object) -> None:
@@ -537,6 +552,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         help="Submit this driver as a three-day, one-core serial Slurm controller job.",
     )
     parser.add_argument("--controller-time", default="72:00:00")
+    parser.add_argument(
+        "--evaluation-time",
+        default="72:00:00",
+        metavar="[D-]HH:MM:SS",
+        help="Slurm wall-clock limit for each CFD evaluation (default: 72:00:00)",
+    )
     parser.add_argument("--controller-partition", default="serial")
     parser.add_argument("--poll-interval", type=float, default=60.0)
     parser.add_argument("--max-concurrent", type=int)

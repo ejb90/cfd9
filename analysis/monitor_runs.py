@@ -8,7 +8,9 @@ import csv
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -33,6 +35,7 @@ class RunStatus:
     status: str
     slurm_state: str
     job_id: str
+    real_time_seconds: float | None
 
 
 def parse_float(text: str) -> float | None:
@@ -167,6 +170,28 @@ def parse_slurm_elapsed(value: str) -> float | None:
     return float(days * 86_400 + hours * 3_600 + minutes * 60 + seconds)
 
 
+def marker_timestamp(path: Path) -> float | None:
+    """Read the ISO-8601 timestamp written by generated UCNS3D job scripts."""
+    if not path.is_file():
+        return None
+    try:
+        value = datetime.fromisoformat(path.read_text(encoding="ascii").strip().replace("Z", "+00:00"))
+    except (OSError, ValueError):
+        return None
+    return value.timestamp()
+
+
+def run_real_time(run_dir: Path, running_elapsed: float | None = None) -> float | None:
+    """Return Slurm elapsed time or the elapsed duration between run markers."""
+    if running_elapsed is not None:
+        return running_elapsed
+    started = marker_timestamp(run_dir / "start")
+    if started is None:
+        return None
+    finished = marker_timestamp(run_dir / "done")
+    return max((finished if finished is not None else time.time()) - started, 0.0)
+
+
 def query_slurm(timeout: float = 10.0) -> tuple[dict[Path, SlurmJob], str | None]:
     command = ["squeue", "-h", "-o", "%i|%T|%Z|%j|%M"]
     try:
@@ -174,8 +199,7 @@ def query_slurm(timeout: float = 10.0) -> tuple[dict[Path, SlurmJob], str | None
             command,
             check=False,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=timeout,
         )
     except FileNotFoundError:
@@ -233,6 +257,11 @@ def classify_run(run_dir: Path, slurm_jobs: dict[Path, SlurmJob], tolerance: flo
     else:
         status = "failed"
 
+    real_time = run_real_time(
+        run_dir,
+        slurm_job.elapsed_seconds if status == "running" and slurm_job is not None else None,
+    )
+
     return RunStatus(
         directory=run_dir,
         mesh_cells=cells,
@@ -241,6 +270,7 @@ def classify_run(run_dir: Path, slurm_jobs: dict[Path, SlurmJob], tolerance: flo
         status=status,
         slurm_state=slurm_job.state if slurm_job else "",
         job_id=slurm_job.job_id if slurm_job else "",
+        real_time_seconds=real_time,
     )
 
 
@@ -252,13 +282,33 @@ def format_value(value: object) -> str:
     return str(value)
 
 
-def write_markdown(rows: list[RunStatus], handle) -> None:
-    headers = ["directory", "mesh_cells", "status", "target_time", "last_time", "slurm", "job_id"]
+def format_duration(value: float | None) -> str:
+    if value is None:
+        return "-"
+    seconds = max(0, int(round(value)))
+    days, seconds = divmod(seconds, 86_400)
+    hours, seconds = divmod(seconds, 3_600)
+    minutes, seconds = divmod(seconds, 60)
+    prefix = f"{days}-" if days else ""
+    return f"{prefix}{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def colour_duration(value: str, status: str, enabled: bool) -> str:
+    if not enabled or value == "-":
+        return value
+    colours = {"success": "32", "running": "33", "failed": "31"}
+    colour = colours.get(status)
+    return f"\033[{colour}m{value}\033[0m" if colour else value
+
+
+def write_markdown(rows: list[RunStatus], handle, colour: bool = False) -> None:
+    headers = ["directory", "mesh_cells", "status", "real_time", "target_time", "last_time", "slurm", "job_id"]
     table = [
         [
             str(row.directory),
             format_value(row.mesh_cells),
             row.status,
+            format_duration(row.real_time_seconds),
             format_value(row.target_time),
             format_value(row.last_time),
             row.slurm_state or "-",
@@ -273,19 +323,24 @@ def write_markdown(rows: list[RunStatus], handle) -> None:
 
     print("| " + " | ".join(headers[i].ljust(widths[i]) for i in range(len(headers))) + " |", file=handle)
     print("| " + " | ".join("-" * widths[i] for i in range(len(headers))) + " |", file=handle)
-    for row in table:
-        print("| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |", file=handle)
+    for values, row in zip(table, rows, strict=True):
+        cells = [value.ljust(widths[index]) for index, value in enumerate(values)]
+        cells[3] = colour_duration(cells[3], row.status, colour)
+        print("| " + " | ".join(cells) + " |", file=handle)
 
 
 def write_csv(rows: list[RunStatus], handle) -> None:
     writer = csv.writer(handle)
-    writer.writerow(["directory", "mesh_cells", "status", "target_time", "last_time", "slurm", "job_id"])
+    writer.writerow(
+        ["directory", "mesh_cells", "status", "real_time_seconds", "target_time", "last_time", "slurm", "job_id"]
+    )
     for row in rows:
         writer.writerow(
             [
                 row.directory,
                 row.mesh_cells,
                 row.status,
+                row.real_time_seconds,
                 row.target_time,
                 row.last_time,
                 row.slurm_state,
@@ -317,6 +372,12 @@ def parse_args() -> argparse.Namespace:
         metavar="SECONDS",
         help="Timeout for each subprocess command in seconds (default: 10).",
     )
+    parser.add_argument(
+        "--colour",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Colour the real-time field by run status (default: auto).",
+    )
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero")
@@ -340,7 +401,8 @@ def main() -> int:
         if args.format == "csv":
             write_csv(rows, sys.stdout)
         else:
-            write_markdown(rows, sys.stdout)
+            colour = args.colour == "always" or (args.colour == "auto" and sys.stdout.isatty())
+            write_markdown(rows, sys.stdout, colour=colour)
 
     if slurm_warning:
         print(f"warning: {slurm_warning}", file=sys.stderr)

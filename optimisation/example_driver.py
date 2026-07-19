@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from functools import partial
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ from cases.generate_cases import (  # noqa: E402
 from optimisation.ucns3d_pymoo import (  # noqa: E402
     Parameter,
     add_common_arguments,
+    evaluation_wall_time_seconds,
     launch_controller,
     run_optimisation,
     slurm_from_args,
@@ -54,7 +56,13 @@ PARAMETERS = (
 )
 
 
-def make_case(values: dict[str, float], evaluation_index: int) -> CaseConfig:
+def make_case(
+    values: dict[str, float],
+    evaluation_index: int,
+    *,
+    evaluation_time: str = "72:00:00",
+    evaluation_wall_clock_limit: int = 259200,
+) -> CaseConfig:
     shock = normal_shock_state(1.22, AIR, AMBIENT_PRESSURE)
     h = CYLINDER_DIAMETER / 40.0
     return CaseConfig(
@@ -76,6 +84,8 @@ def make_case(values: dict[str, float], evaluation_index: int) -> CaseConfig:
             ),
         ),
         characteristic_length=values["bubble_diameter"],
+        wall_clock_limit=evaluation_wall_clock_limit,
+        slurm_wall_time=evaluation_time,
         job_name=f"opt-{evaluation_index:06d}",
     )
 
@@ -121,6 +131,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    evaluation_wall_clock_limit = evaluation_wall_time_seconds(args.evaluation_time)
     if args.launch_controller:
         if args.prepare_only:
             raise ValueError("--launch-controller cannot be combined with --prepare-only")
@@ -136,7 +147,11 @@ def main() -> None:
         return
     run_optimisation(
         parameters=PARAMETERS,
-        make_case=make_case,
+        make_case=partial(
+            make_case,
+            evaluation_time=args.evaluation_time,
+            evaluation_wall_clock_limit=evaluation_wall_clock_limit,
+        ),
         objective=objective,
         n_obj=3,
         work_dir=args.work_dir,

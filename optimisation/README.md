@@ -97,6 +97,19 @@ uv run python optimisation/water_air_single_bubble_driver.py \
   --ucns3d build/UCNS3D/src/ucns3d_p
 ```
 
+Set the wall-clock limit for each individual UCNS3D evaluation with
+`--evaluation-time`, in Slurm `[D-]HH:MM:SS` form. The same duration is written
+to that evaluation's `ucns3d.jcf` and to UCNS3D's internal wall-clock limit:
+
+```bash
+uv run python optimisation/water_air_single_bubble_driver.py \
+  --prepare-only --population 4 \
+  --evaluation-time 06:00:00
+```
+
+This is distinct from `--controller-time`, which limits only the serial
+optimisation controller.
+
 ## Inspect cases without Slurm
 
 Generate the first population without submitting anything:
