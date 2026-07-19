@@ -11,9 +11,11 @@ file. The default output set is:
 
 Each image uses the same physical view and pixel dimensions. A colour legend
 is embedded by default. A physical-time annotation is placed in the lower-right
-corner of every image. Axes, database names, and interpolated interface
-contours are omitted so the images can later be tiled without unnecessary
-case-specific decorations.
+corner of every image. The physical box and x/y ticks are shown; database names
+and interpolated interface contours are omitted so the images can later be
+tiled without unnecessary case-specific decorations. ImageMagick trims the
+surrounding white canvas after rendering (the launcher accepts either `magick`
+or legacy `convert`).
 The default image height is derived from the physical view, so the complete
 domain is not distorted or surrounded by unused canvas space. Set both
 `--width` and `--height` when a later layout requires fixed raster dimensions.

@@ -127,7 +127,7 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--magick",
         type=Path,
-        help="ImageMagick executable used for separate legends (default: magick on PATH)",
+        help="ImageMagick magick/convert executable used to trim plots and extract legends",
     )
     parser.add_argument("--overwrite", action="store_true", help="replace existing tiles and manifest")
     parser.add_argument("--ranges-only", action="store_true", help=argparse.SUPPRESS)
@@ -157,6 +157,34 @@ def find_visit(requested: Path | None) -> Path:
     if not candidate.is_file():
         raise SystemExit(f"VisIt executable not found: {candidate}")
     return candidate
+
+
+def find_magick(requested: Path | None) -> Path | None:
+    """Locate ImageMagick's modern ``magick`` or legacy ``convert`` frontend."""
+    if requested is not None:
+        candidate = requested.expanduser().resolve()
+        if not candidate.is_file():
+            raise SystemExit(f"ImageMagick executable not found: {candidate}")
+        return candidate
+    executable = shutil.which("magick") or shutil.which("convert")
+    return Path(executable) if executable else None
+
+
+def trim_plot_tiles(magick: Path, output_dir: Path, prefix: str, plots: list[str]) -> None:
+    """Remove VisIt's uniform white canvas margin without changing the plot content."""
+    for plot_name in plots:
+        source = output_dir / f"{prefix}_{plot_name}.png"
+        temporary = source.with_name(f".{source.stem}.trim.png")
+        result = subprocess.run(
+            [str(magick), str(source), "-trim", "+repage", str(temporary)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode or not temporary.is_file():
+            diagnostic = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            raise SystemExit(f"ImageMagick trim failed for {source}{': ' + diagnostic if diagnostic else ''}")
+        temporary.replace(source)
 
 
 def parse_limits(values: list[list[str]] | None, parser_names: tuple[str, ...]) -> dict[str, list[float]]:
@@ -265,10 +293,21 @@ def main() -> None:
             capture_output=True,
         )
 
+    # VisIt 3.4 maps sys.exit(0) from a startup script to frontend status 250.
+    # Report its own diagnostic before attempting ImageMagick post-processing.
+    successful_status = completed.returncode in (0, 250)
+    if not successful_status:
+        diagnostic = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+        if diagnostic:
+            diagnostic = f"\nVisIt output:\n{diagnostic[-4000:]}"
+        raise SystemExit(f"VisIt rendering failed with exit status {completed.returncode}{diagnostic}")
+
+    magick = None if args.ranges_only else find_magick(args.magick)
+    if not args.ranges_only and magick is None:
+        raise SystemExit("trimming plot whitespace requires ImageMagick; pass --magick /path/to/magick-or-convert")
     if legend_mode == "separate":
-        magick = args.magick.expanduser().resolve() if args.magick is not None else shutil.which("magick")
-        if magick is None or not Path(magick).is_file():
-            raise SystemExit("separate legends require ImageMagick; pass --magick /path/to/magick")
+        if magick is None:
+            raise SystemExit("separate legends require ImageMagick; pass --magick /path/to/magick-or-convert")
         for plot_name in args.plots:
             source = output_dir / f"{prefix}_{plot_name}_legend_source.png"
             target = output_dir / f"{prefix}_{plot_name}_legend.png"
@@ -294,20 +333,13 @@ def main() -> None:
             if crop.returncode:
                 raise SystemExit(f"ImageMagick legend extraction failed for {source}")
             source.unlink()
+    if not args.ranges_only:
+        trim_plot_tiles(magick, output_dir, prefix, args.plots)
     manifest = output_dir / f"{prefix}_plots.json"
     missing_outputs = [path for path in expected if not path.is_file()]
-    # VisIt 3.4 maps sys.exit(0) from a startup script to frontend status 250.
-    # Treat that one status as success only if this invocation freshly wrote
-    # every requested output. Other statuses and partial renders remain errors.
-    successful_status = completed.returncode in (0, 250)
-    if not successful_status or missing_outputs:
+    if missing_outputs:
         missing = ", ".join(str(path) for path in missing_outputs) or "none"
-        diagnostic = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
-        if diagnostic:
-            diagnostic = f"\nVisIt output:\n{diagnostic[-4000:]}"
-        raise SystemExit(
-            f"VisIt rendering failed with exit status {completed.returncode}; missing outputs: {missing}{diagnostic}"
-        )
+        raise SystemExit(f"VisIt did not write the expected outputs: {missing}")
     print(f"Rendered {len(args.plots)} plot tiles; manifest: {manifest}")
 
 

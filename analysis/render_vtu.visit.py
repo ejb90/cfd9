@@ -111,7 +111,7 @@ def query_schlieren_range(variable="plot_schlieren_range"):
 
 def configure_annotations(show_legends):
     attributes = AnnotationAttributes()
-    attributes.axes2D.visible = 0
+    attributes.axes2D.visible = 1
     attributes.axes3D.visible = 0
     attributes.userInfoFlag = 0
     attributes.databaseInfoFlag = 0
