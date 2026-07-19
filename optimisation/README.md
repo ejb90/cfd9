@@ -203,6 +203,20 @@ optimisation_runs/two_bubbles/
 `generation_XXXX_X.csv` contains the parameter vectors proposed by `pymoo`.
 `generation_XXXX_F.csv` contains the objective vectors returned to it.
 
+## Pareto-front plot
+
+For the water-air single-cavity study, create a cumulative trade-off plot with:
+
+```bash
+uv run python analysis/plot_optimisation.py optimisation_runs/water_air_single
+```
+
+It writes two figures: `pareto_front.png`, which plots physical `Mbad_target`
+against physical `Ap95_target` (the latter is stored as a negated minimisation
+objective) and colours every evaluation by generation; and `design_space.png`,
+which plots bubble density against radius in two panels coloured by pressure
+amplification and contamination. Both outline the cumulative non-dominated set.
+
 ## Resume for another controller allocation
 
 To continue from the last completed generation, repeat the launch command with
