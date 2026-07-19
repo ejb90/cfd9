@@ -50,6 +50,7 @@ INTERFACE_COLOURS = (
     (0, 114, 178, 255),
     (240, 228, 66, 255),
 )
+SCHLIEREN_RANGE_CEILING = 1.0e10
 
 
 def fail(message):
@@ -90,6 +91,22 @@ def query_range(label, allow_invalid=False):
     if result is None and not allow_invalid:
         fail("invalid MinMax query for {}: {}".format(label, value))
     return result
+
+
+def add_scalar_plot(variable, label):
+    """Make one scalar plot active and ready for a MinMax query or rendering."""
+    DeleteAllPlots()
+    if not AddPlot("Pseudocolor", variable, 1, 0):
+        fail("could not add {} pseudocolour plot".format(label))
+    if not DrawPlots():
+        fail("could not draw {} pseudocolour plot".format(label))
+    SetActivePlots(0)
+
+
+def query_schlieren_range(variable="plot_schlieren_range"):
+    """Query schlieren after discarding known non-physical numerical spikes."""
+    add_scalar_plot(variable, "schlieren range")
+    return query_range("schlieren", allow_invalid=True)
 
 
 def configure_annotations(show_legends):
@@ -213,6 +230,17 @@ if schlieren_uses_native:
     DefineScalarExpression("plot_schlieren", "<schlieren>")
 else:
     DefineScalarExpression("plot_schlieren", "<plot_schlieren_fallback>")
+# UCNS3D occasionally writes isolated, non-physical schlieren values around
+# 1e100. They are excluded from MinMax queries, rather than being allowed to
+# make the useful range of the colour scale invisible.
+DefineScalarExpression(
+    "plot_schlieren_range",
+    "if(lt(<plot_schlieren>,{}),<plot_schlieren>,0)".format(SCHLIEREN_RANGE_CEILING),
+)
+DefineScalarExpression(
+    "plot_schlieren_fallback_range",
+    "if(lt(<plot_schlieren_fallback>,{}),<plot_schlieren_fallback>,0)".format(SCHLIEREN_RANGE_CEILING),
+)
 
 if "u" not in scalars or "v" not in scalars:
     fail("vorticity requires scalar velocity fields 'u' and 'v'")
@@ -301,26 +329,16 @@ manifest = {
 }
 
 for plot_name in config["plots"]:
-    DeleteAllPlots()
     definition = PLOT_DEFINITIONS[plot_name]
-    if not AddPlot("Pseudocolor", definition["variable"], 1, 0):
-        fail("could not add {} pseudocolour plot".format(plot_name))
-    if not DrawPlots():
-        fail("could not draw {} pseudocolour plot".format(plot_name))
-    SetActivePlots(0)
-    data_range = query_range(plot_name, allow_invalid=plot_name == "schlieren" and schlieren_uses_native)
+    add_scalar_plot(definition["variable"], plot_name)
+    data_range = query_schlieren_range() if plot_name == "schlieren" else query_range(plot_name)
     if data_range is None:
         # Some solver outputs contain non-finite values in their stored
         # schlieren array.  Recompute the diagnostic from density so a bad
         # native diagnostic cannot prevent the other plot tiles from being
         # rendered.
-        DeleteAllPlots()
         definition = dict(definition, variable="plot_schlieren_fallback")
-        schlieren_uses_native = False
-        if not AddPlot("Pseudocolor", definition["variable"], 1, 0) or not DrawPlots():
-            fail("could not draw fallback schlieren pseudocolour plot")
-        SetActivePlots(0)
-        data_range = query_range(plot_name)
+        data_range = query_schlieren_range("plot_schlieren_fallback_range")
 
     limits = config["limits"].get(plot_name)
     if limits is None:
@@ -333,6 +351,9 @@ for plot_name in config["plots"]:
             limits = [0.0, 1.0]
         else:
             limits = data_range
+    # The schlieren range query briefly makes its masked helper expression the
+    # active plot. Restore the real field before setting plot attributes.
+    add_scalar_plot(definition["variable"], plot_name)
     if ranges_only:
         manifest["plots"][plot_name] = {
             "file": None,

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-
 FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][-+]?\d+)?")
 
 
