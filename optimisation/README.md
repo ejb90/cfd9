@@ -217,6 +217,24 @@ objective) and colours every evaluation by generation; and `design_space.png`,
 which plots bubble density against radius in two panels coloured by pressure
 amplification and contamination. Both outline the cumulative non-dominated set.
 
+Use driver names to choose the plotted fields. For example, these options are
+explicitly equivalent to the water-air defaults:
+
+```bash
+uv run python analysis/plot_optimisation.py optimisation_runs/water_air_single \
+  --x-input bubble_density_kg_m3 \
+  --y-input bubble_radius_mm \
+  --x-output Mbad_target \
+  --y-output Ap95_target \
+  --left-output Ap95_target \
+  --right-output Mbad_target \
+  --maximise-output Ap95_target
+```
+
+For another driver, provide its column ordering once with
+`--parameter-names ... --objective-names ...`; the same named input/output
+options then select the plot axes and design-space panels.
+
 ## Resume for another controller allocation
 
 To continue from the last completed generation, repeat the launch command with

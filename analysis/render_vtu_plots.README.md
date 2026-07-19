@@ -147,6 +147,39 @@ All single-VTU options are available, including `--plots`, `--bounds`,
 `--legend-mode`, `--visit`, and `--magick`. Use `--dry-run` to inspect
 file/time matching without starting VisIt.
 
+For a bubble-following temporal crop, pass the bubble component to
+`--bubble-crop-component`. The tracker evaluates every numbered VTU in the run,
+uses the minimum/maximum of its upstream, downstream, and jet x positions, and
+selects the largest resulting width. Each selected image uses that fixed width
+but is centred on its own bubble midpoint `(xmin + xmax) / 2`:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --times 0 5.0e-7 1.0e-6 \
+  --bubble-crop-component 2 \
+  --bubble-crop-cutoff 0.5
+```
+
+Without `--bubble-crop-cutoff`, the value of `--interface-cutoff` is used. The
+crop preserves the full VTU y extent, or the y limits from `--bounds` when
+they are supplied.
+
+Add `--gifs` to assemble each requested pseudocolour tile sequence into an
+animated GIF after the time-series render completes:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --timesteps 0 20 40 60 80 \
+  --plots density schlieren pressure \
+  --gifs --gif-delay 6
+```
+
+The GIFs are named `density.gif`, `schlieren.gif`, and `pressure.gif` (or use
+the supplied prefix), and are listed under `animations` in `time_series.json`.
+Frame order follows the selected series order rather than lexical filename
+order. `--gif-delay` is in centiseconds and defaults to 6; GIF creation uses
+ImageMagick, configurable with `--magick`.
+
 The wrapper renders a VTU only once if several requested times select the same
 file. Its `time_series.json` manifest preserves every request in order and
 records the chosen file, embedded physical time, error from the requested

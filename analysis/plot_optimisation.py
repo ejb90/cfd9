@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--y-objective", type=int, default=0, metavar="INDEX", help="objective column for y (default: 0)"
     )
+    parser.add_argument("--x-output", metavar="NAME", help="named objective for the Pareto x-axis")
+    parser.add_argument("--y-output", metavar="NAME", help="named objective for the Pareto y-axis")
+    parser.add_argument("--left-output", metavar="NAME", help="named objective for the left design-space panel")
+    parser.add_argument("--right-output", metavar="NAME", help="named objective for the right design-space panel")
     parser.add_argument(
         "--maximise",
         type=int,
@@ -35,6 +39,14 @@ def parse_args() -> argparse.Namespace:
         metavar="INDEX",
         help="objective columns stored with a negative sign for maximisation (default: 0)",
     )
+    parser.add_argument(
+        "--maximise-output",
+        nargs="+",
+        metavar="NAME",
+        help="named outputs stored with a negative sign for maximisation",
+    )
+    parser.add_argument("--objective-names", nargs="+", metavar="NAME", help="objective names in F-column order")
+    parser.add_argument("--parameter-names", nargs="+", metavar="NAME", help="parameter names in X-column order")
     parser.add_argument("--x-label", help="x-axis label (default: inferred from the objective index)")
     parser.add_argument("--y-label", help="y-axis label (default: inferred from the objective index)")
     parser.add_argument("--output", type=Path, help="PNG path (default: WORK_DIR/pareto_front.png)")
@@ -47,6 +59,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--y-parameter", type=int, default=1, metavar="INDEX", help="parameter column for y (default: 1)"
     )
+    parser.add_argument("--x-input", metavar="NAME", help="named parameter for the design-map x-axis")
+    parser.add_argument("--y-input", metavar="NAME", help="named parameter for the design-map y-axis")
     parser.add_argument("--x-parameter-label", help="design-map x-axis label")
     parser.add_argument("--y-parameter-label", help="design-map y-axis label")
     parser.add_argument("--dpi", type=int, default=220, help="PNG resolution (default: 220)")
@@ -137,6 +151,30 @@ def parameter_label(index: int, supplied: str | None) -> str:
     return f"Parameter {index}"
 
 
+def column_names(provided: list[str] | None, count: int, defaults: tuple[str, ...], kind: str) -> list[str]:
+    if provided is not None:
+        if len(provided) != count:
+            raise ValueError(
+                f"--{kind}-names supplies {len(provided)} names but the campaign has {count} {kind} columns"
+            )
+        if len(set(provided)) != len(provided):
+            raise ValueError(f"--{kind}-names must be unique")
+        return provided
+    if count == len(defaults):
+        return list(defaults)
+    return [f"{kind}_{index}" for index in range(count)]
+
+
+def selected_column(name: str | None, index: int, names: list[str], option: str) -> int:
+    if name is None:
+        return index
+    try:
+        return names.index(name)
+    except ValueError as exc:
+        available = ", ".join(names)
+        raise ValueError(f"{option} {name!r} is not available; choose from {available}") from exc
+
+
 def main() -> None:
     args = parse_args()
     work_dir = args.work_dir.expanduser().resolve()
@@ -148,16 +186,41 @@ def main() -> None:
         raise SystemExit(f"requested objective column is outside the {objectives.shape[1]} columns in {work_dir}")
     if max(args.x_parameter, args.y_parameter) >= parameters.shape[1]:
         raise SystemExit(f"requested parameter column is outside the {parameters.shape[1]} columns in {work_dir}")
+    try:
+        output_names = column_names(
+            args.objective_names, objectives.shape[1], ("Ap95_target", "Mbad_target"), "objective"
+        )
+        input_names = column_names(
+            args.parameter_names,
+            parameters.shape[1],
+            ("bubble_density_kg_m3", "bubble_radius_mm"),
+            "parameter",
+        )
+        x_objective = selected_column(args.x_output, args.x_objective, output_names, "--x-output")
+        y_objective = selected_column(args.y_output, args.y_objective, output_names, "--y-output")
+        left_objective = selected_column(args.left_output, y_objective, output_names, "--left-output")
+        right_objective = selected_column(args.right_output, x_objective, output_names, "--right-output")
+        x_parameter = selected_column(args.x_input, args.x_parameter, input_names, "--x-input")
+        y_parameter = selected_column(args.y_input, args.y_parameter, input_names, "--y-input")
+        maximise = set(args.maximise)
+        maximise.update(
+            selected_column(name, 0, output_names, "--maximise-output") for name in args.maximise_output or ()
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if x_objective == y_objective:
+        raise SystemExit("selected x and y outputs must differ")
+    if x_parameter == y_parameter:
+        raise SystemExit("selected x and y inputs must differ")
 
-    maximise = set(args.maximise)
-    x_min = objectives[:, args.x_objective]
-    y_min = objectives[:, args.y_objective]
-    x = -x_min if args.x_objective in maximise else x_min
-    y = -y_min if args.y_objective in maximise else y_min
+    x_min = objectives[:, x_objective]
+    y_min = objectives[:, y_objective]
+    x = -x_min if x_objective in maximise else x_min
+    y = -y_min if y_objective in maximise else y_min
     pareto = non_dominated_2d(np.column_stack((x_min, y_min)))
 
-    x_objective_label = axis_label(args.x_objective, maximise, args.x_label)
-    y_objective_label = axis_label(args.y_objective, maximise, args.y_label)
+    x_objective_label = axis_label(x_objective, maximise, args.x_label or output_names[x_objective])
+    y_objective_label = axis_label(y_objective, maximise, args.y_label or output_names[y_objective])
 
     fig, ax = plt.subplots(figsize=(8.0, 6.5), constrained_layout=True)
     points = ax.scatter(x, y, c=generation, cmap="viridis", s=30, alpha=0.7, linewidths=0, label="Evaluations")
@@ -185,10 +248,16 @@ def main() -> None:
 
     design_output = args.design_output.expanduser().resolve() if args.design_output else work_dir / "design_space.png"
     design_output.parent.mkdir(parents=True, exist_ok=True)
-    design_x = parameters[:, args.x_parameter]
-    design_y = parameters[:, args.y_parameter]
+    design_x = parameters[:, x_parameter]
+    design_y = parameters[:, y_parameter]
     figure, axes = plt.subplots(1, 2, figsize=(13.0, 5.6), sharex=True, sharey=True, constrained_layout=True)
-    for axis, values, label in zip(axes, (y, x), (y_objective_label, x_objective_label), strict=True):
+    for axis, objective, label in zip(
+        axes,
+        (left_objective, right_objective),
+        (output_names[left_objective], output_names[right_objective]),
+        strict=True,
+    ):
+        values = -objectives[:, objective] if objective in maximise else objectives[:, objective]
         map_points = axis.scatter(design_x, design_y, c=values, cmap="viridis", s=34, alpha=0.8, linewidths=0)
         axis.scatter(
             design_x[pareto],
@@ -203,9 +272,9 @@ def main() -> None:
         colourbar.set_label(label)
         axis.set_title(label)
         axis.grid(True, alpha=0.25)
-    axes[0].set_ylabel(parameter_label(args.y_parameter, args.y_parameter_label))
+    axes[0].set_ylabel(parameter_label(y_parameter, args.y_parameter_label or input_names[y_parameter]))
     for axis in axes:
-        axis.set_xlabel(parameter_label(args.x_parameter, args.x_parameter_label))
+        axis.set_xlabel(parameter_label(x_parameter, args.x_parameter_label or input_names[x_parameter]))
     figure.savefig(design_output, dpi=args.dpi)
     print(
         f"wrote {output} and {design_output} from {len(objectives)} evaluations; "

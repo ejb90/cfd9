@@ -12,7 +12,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 from render_vtu_plots import add_render_arguments, read_vtu_time_value
+from track_interfaces import extract_interface_positions_vtk
 
 OUTPUT_PATTERN = re.compile(r"^OUT_(\d+)\.vtu$", re.IGNORECASE)
 
@@ -64,6 +66,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="print the selected VTUs and physical times without rendering",
     )
+    parser.add_argument(
+        "--bubble-crop-component",
+        type=int,
+        metavar="N",
+        help=(
+            "track volume_fraction<N> over the full run and crop each frame to the largest bubble x extent; "
+            "the crop follows each frame's bubble midpoint"
+        ),
+    )
+    parser.add_argument(
+        "--bubble-crop-cutoff",
+        type=float,
+        metavar="F",
+        help="volume-fraction cutoff for --bubble-crop-component (default: --interface-cutoff)",
+    )
+    parser.add_argument(
+        "--gifs",
+        "--make-gifs",
+        dest="gifs",
+        action="store_true",
+        help="assemble one ordered animated GIF per requested plot after rendering",
+    )
+    parser.add_argument(
+        "--gif-delay",
+        type=int,
+        default=6,
+        metavar="CENTISECONDS",
+        help="GIF frame delay in centiseconds (default: 6)",
+    )
     add_render_arguments(parser)
     for action in parser._actions:
         if action.dest == "prefix":
@@ -77,6 +108,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--times entries must be finite and non-negative")
     if args.timesteps is not None and any(value < 0 for value in args.timesteps):
         parser.error("--timesteps entries must be non-negative")
+    if args.bubble_crop_component is not None and args.bubble_crop_component < 1:
+        parser.error("--bubble-crop-component must be at least 1")
+    if args.bubble_crop_cutoff is not None and not 0.0 < args.bubble_crop_cutoff < 1.0:
+        parser.error("--bubble-crop-cutoff must lie strictly between 0 and 1")
+    if args.gif_delay < 1:
+        parser.error("--gif-delay must be at least 1 centisecond")
     if args.legend_mode == "separate":
         fixed_plots = {values[0] for values in args.limits or []}
         missing_limits = sorted(set(args.plots).difference(fixed_plots | {"mixedness"}))
@@ -175,12 +212,13 @@ def append_render_options(
     args: argparse.Namespace,
     child_prefix: str,
     legend_mode: str,
+    bounds: tuple[float, float, float, float] | None,
 ) -> None:
     command.extend(["--plots", *args.plots, "--prefix", child_prefix, "--width", str(args.width)])
     if args.height is not None:
         command.extend(["--height", str(args.height)])
-    if args.bounds is not None:
-        command.extend(["--bounds", *(str(value) for value in args.bounds)])
+    if bounds is not None:
+        command.extend(["--bounds", *(str(value) for value in bounds)])
     command.extend(
         [
             "--ambient-component",
@@ -215,6 +253,83 @@ def unique_paths(frames: list[dict[str, object]]) -> list[Path]:
     return selected
 
 
+def vtu_y_bounds(path: Path) -> tuple[float, float]:
+    """Read a VTU's y extents for a bubble-following x crop."""
+    import vtk
+
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(str(path))
+    reader.Update()
+    bounds = reader.GetOutput().GetBounds()
+    if len(bounds) < 4 or not all(math.isfinite(value) for value in bounds[2:4]) or bounds[2] >= bounds[3]:
+        raise ValueError(f"could not determine valid y bounds from {path}")
+    return float(bounds[2]), float(bounds[3])
+
+
+def add_bubble_crop_bounds(args: argparse.Namespace, run_dir: Path, frames: list[dict[str, object]]) -> float | None:
+    """Attach a constant-width, bubble-centred view to every selected frame."""
+    if args.bubble_crop_component is None:
+        return None
+
+    cutoff = args.bubble_crop_cutoff if args.bubble_crop_cutoff is not None else args.interface_cutoff
+    positions = extract_interface_positions_vtk(run_dir, args.bubble_crop_component, cutoff)
+    if not len(positions):
+        raise ValueError("bubble tracking found no cells above the requested volume-fraction cutoff")
+
+    extent_start = np.min(positions[:, 1:4], axis=1)
+    extent_end = np.max(positions[:, 1:4], axis=1)
+    width = float(np.max(extent_end - extent_start))
+    if not math.isfinite(width) or width <= 0.0:
+        raise ValueError("bubble tracking did not produce a positive finite x extent")
+
+    for frame in frames:
+        time = frame["physical_time"]
+        if time is None:
+            raise ValueError(f"bubble crop requires a readable TimeValue: {frame['vtu']}")
+        closest = int(np.argmin(np.abs(positions[:, 0] - time)))
+        tracked_time = float(positions[closest, 0])
+        if not np.isclose(tracked_time, time, rtol=1.0e-9, atol=1.0e-12):
+            raise ValueError(f"no bubble-tracking position matches {frame['vtu']} at time {time:.16g} s")
+        midpoint = float(0.5 * (extent_start[closest] + extent_end[closest]))
+        y_min, y_max = (args.bounds[2], args.bounds[3]) if args.bounds is not None else vtu_y_bounds(Path(frame["vtu"]))
+        bounds = (midpoint - 0.5 * width, midpoint + 0.5 * width, y_min, y_max)
+        frame["bubble_crop_bounds"] = list(bounds)
+        frame["bubble_crop_midpoint"] = midpoint
+    return width
+
+
+def make_gifs(
+    args: argparse.Namespace,
+    frames: list[dict[str, object]],
+    output_dir: Path,
+) -> dict[str, str]:
+    """Create one manifest-ordered animated GIF for every requested plot."""
+    requested = args.magick.expanduser().resolve() if args.magick is not None else shutil.which("magick")
+    if requested is None or not Path(requested).is_file():
+        raise ValueError("--gifs requires ImageMagick; pass --magick /path/to/magick")
+
+    animations: dict[str, str] = {}
+    for plot_name in args.plots:
+        frames_for_plot = [frame["plots"][plot_name] for frame in frames]
+        target = output_dir / (f"{args.prefix}_{plot_name}.gif" if args.prefix else f"{plot_name}.gif")
+        command = [
+            str(requested),
+            "-delay",
+            str(args.gif_delay),
+            "-loop",
+            "0",
+            "-dispose",
+            "previous",
+            *frames_for_plot,
+            str(target),
+        ]
+        completed = subprocess.run(command, check=False)
+        if completed.returncode:
+            raise ValueError(f"ImageMagick GIF assembly failed for {plot_name}")
+        animations[plot_name] = str(target)
+    return animations
+
+
 def main() -> None:
     args = parse_args()
     run_dir = args.run_dir.expanduser().resolve()
@@ -238,6 +353,11 @@ def main() -> None:
     if args.dry_run:
         return
 
+    try:
+        bubble_crop_width = add_bubble_crop_bounds(args, run_dir, frames)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid bubble crop: {exc}") from exc
+
     output_dir = args.output_dir.expanduser().resolve() if args.output_dir is not None else run_dir / "plot_series"
     output_dir.mkdir(parents=True, exist_ok=True)
     series_name = f"{args.prefix}_time_series.json" if args.prefix else "time_series.json"
@@ -247,7 +367,8 @@ def main() -> None:
         for name in args.plots
         if args.legend_mode == "separate"
     }
-    series_outputs = [series_manifest, *shared_legend_paths.values()]
+    gif_paths = [output_dir / (f"{args.prefix}_{name}.gif" if args.prefix else f"{name}.gif") for name in args.plots]
+    series_outputs = [series_manifest, *shared_legend_paths.values(), *(gif_paths if args.gifs else [])]
     collisions = [path for path in series_outputs if path.exists()]
     if collisions and not args.overwrite:
         names = "\n  ".join(str(path) for path in collisions)
@@ -265,7 +386,9 @@ def main() -> None:
         child_legend_mode = "separate" if args.legend_mode == "separate" and index == 0 else args.legend_mode
         if args.legend_mode == "separate" and index > 0:
             child_legend_mode = "none"
-        append_render_options(command, args, child_prefix, child_legend_mode)
+        frame = next(frame for frame in frames if Path(frame["vtu"]) == path)
+        bounds = tuple(frame["bubble_crop_bounds"]) if "bubble_crop_bounds" in frame else args.bounds
+        append_render_options(command, args, child_prefix, child_legend_mode, bounds)
         completed = subprocess.run(command, check=False)
         if completed.returncode:
             raise SystemExit(f"rendering failed for {path} with exit status {completed.returncode}")
@@ -290,13 +413,20 @@ def main() -> None:
         frame["render_manifest"] = str(manifest_path)
         frame["plots"] = {name: plot["file"] for name, plot in child_manifest["plots"].items()}
 
+    try:
+        animations = make_gifs(args, frames, output_dir) if args.gifs else {}
+    except ValueError as exc:
+        raise SystemExit(f"GIF assembly failed: {exc}") from exc
+
     manifest = {
         "schema_version": 1,
         "selector": selector,
         "run_dir": str(run_dir),
         "output_dir": str(output_dir),
         "legend_mode": args.legend_mode,
+        "bubble_crop_width": bubble_crop_width,
         "legends": shared_legends,
+        "animations": animations,
         "frames": frames,
     }
     series_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
