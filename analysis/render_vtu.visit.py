@@ -103,7 +103,7 @@ def add_scalar_plot(variable, label):
     SetActivePlots(0)
 
 
-def query_schlieren_range(variable="plot_schlieren_range"):
+def query_schlieren_range(variable="plot_schlieren"):
     """Query schlieren after discarding known non-physical numerical spikes."""
     add_scalar_plot(variable, "schlieren range")
     return query_range("schlieren", allow_invalid=True)
@@ -227,18 +227,18 @@ if len(volume_fraction_fields) < 2:
 schlieren_uses_native = "schlieren" in scalars
 DefineScalarExpression("plot_schlieren_fallback", "magnitude(gradient(<density>))")
 if schlieren_uses_native:
-    DefineScalarExpression("plot_schlieren", "<schlieren>")
+    schlieren_raw = "<schlieren>"
 else:
-    DefineScalarExpression("plot_schlieren", "<plot_schlieren_fallback>")
+    schlieren_raw = "<plot_schlieren_fallback>"
 # UCNS3D occasionally writes isolated, non-physical schlieren values around
-# 1e100. They are excluded from MinMax queries, rather than being allowed to
-# make the useful range of the colour scale invisible.
+# 1e100. Map them to zero (white in the inverted grey table), so they neither
+# dominate MinMax queries nor appear as false background features.
 DefineScalarExpression(
-    "plot_schlieren_range",
-    "if(lt(<plot_schlieren>,{}),<plot_schlieren>,0)".format(SCHLIEREN_RANGE_CEILING),
+    "plot_schlieren",
+    "if(lt({},{}),{},0)".format(schlieren_raw, SCHLIEREN_RANGE_CEILING, schlieren_raw),
 )
 DefineScalarExpression(
-    "plot_schlieren_fallback_range",
+    "plot_schlieren_fallback_clean",
     "if(lt(<plot_schlieren_fallback>,{}),<plot_schlieren_fallback>,0)".format(SCHLIEREN_RANGE_CEILING),
 )
 
@@ -337,8 +337,8 @@ for plot_name in config["plots"]:
         # schlieren array.  Recompute the diagnostic from density so a bad
         # native diagnostic cannot prevent the other plot tiles from being
         # rendered.
-        definition = dict(definition, variable="plot_schlieren_fallback")
-        data_range = query_schlieren_range("plot_schlieren_fallback_range")
+        definition = dict(definition, variable="plot_schlieren_fallback_clean")
+        data_range = query_schlieren_range("plot_schlieren_fallback_clean")
 
     limits = config["limits"].get(plot_name)
     if limits is None:

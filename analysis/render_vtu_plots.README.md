@@ -107,9 +107,9 @@ Change the optional contour with `--interface-cutoff F`.
 - Schlieren uses the native `schlieren` field when present and otherwise
   evaluates `magnitude(gradient(<density>))` in VisIt. If the native field has
   a non-finite range, the renderer automatically retries with that density-gradient
-  expression. Isolated schlieren values at or above `1e10` are ignored when
-  calculating colour bounds, preventing known numerical spikes from dominating
-  a frame or time-series scale.
+  expression. Isolated schlieren values at or above `1e10` are mapped to zero
+  (white), preventing known numerical spikes from dominating a frame or
+  time-series scale or appearing as false background features.
 - Vorticity evaluates `curl({<u>,<v>,0*<u>})`; for a 2D mesh VisIt returns the
   signed out-of-plane component.
 - For `N` material volume fractions, mixedness is
