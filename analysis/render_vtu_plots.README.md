@@ -10,8 +10,9 @@ file. The default output set is:
 - normalised multi-material mixedness.
 
 Each image uses the same physical view and pixel dimensions. A colour legend
-is embedded by default. Axes, database names, time labels, and interpolated
-interface contours are omitted so the images can later be tiled without
+is embedded by default. A physical-time annotation is placed in the lower-right
+corner of every image. Axes, database names, and interpolated interface
+contours are omitted so the images can later be tiled without unnecessary
 case-specific decorations.
 The default image height is derived from the physical view, so the complete
 domain is not distorted or surrounded by unused canvas space. Set both
@@ -185,15 +186,26 @@ uses ImageMagick, configurable with `--magick`.
 The wrapper renders a VTU only once if several requested times select the same
 file. Its `time_series.json` manifest preserves every request in order and
 records the chosen file, embedded physical time, error from the requested
-time, output index, child manifest, and plot filenames. For meaningful visual
-comparisons, supply common `--limits` for each scalar rather than allowing
-every frame to autoscale independently.
+time, output index, child manifest, and plot filenames.
 
-Time-series plots embed legends by default, ensuring every independently
-scaled tile remains interpretable. To produce one shared legend image per
-quantity instead, select `--legend-mode separate` and provide fixed
-`--limits` for every requested data-dependent plot. Mixedness already has the
-fixed range `[0,1]`:
+Use `--shared-limits` to preflight every selected unique VTU, find the global
+cell-data minimum and maximum for each requested quantity, and use those same
+colour bounds on every frame. Schlieren remains zero-based, vorticity remains
+symmetric about zero, and mixedness uses `[0, 1]`. Explicit `--limits` entries
+take precedence for their named plots. The selected bounds are recorded as
+`shared_limits` in `time_series.json`:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --timesteps 0 20 40 60 80 \
+  --plots density pressure vorticity \
+  --shared-limits
+```
+
+Time-series plots embed legends by default. To produce one shared legend image
+per quantity instead, select `--legend-mode separate` and provide fixed
+`--limits` for every requested data-dependent plot, or use `--shared-limits`
+to calculate them first. Mixedness already has the fixed range `[0,1]`:
 
 ```bash
 python analysis/render_vtu_time_series.py RUN_DIR tiles \

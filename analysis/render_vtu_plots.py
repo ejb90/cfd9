@@ -130,6 +130,7 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
         help="ImageMagick executable used for separate legends (default: magick on PATH)",
     )
     parser.add_argument("--overwrite", action="store_true", help="replace existing tiles and manifest")
+    parser.add_argument("--ranges-only", action="store_true", help=argparse.SUPPRESS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -199,7 +200,7 @@ def main() -> None:
     if Path(prefix).name != prefix:
         raise SystemExit("--prefix must be a filename prefix, not a path")
 
-    expected = [output_dir / f"{prefix}_{name}.png" for name in args.plots]
+    expected = [] if args.ranges_only else [output_dir / f"{prefix}_{name}.png" for name in args.plots]
     if legend_mode == "separate":
         expected.extend(output_dir / f"{prefix}_{name}_legend.png" for name in args.plots)
     expected.append(output_dir / f"{prefix}_plots.json")
@@ -232,6 +233,7 @@ def main() -> None:
         "interface_cutoff": args.interface_cutoff,
         "draw_interfaces": args.interfaces,
         "legend_mode": legend_mode,
+        "ranges_only": args.ranges_only,
         "limits": parse_limits(args.limits, PLOT_NAMES),
         "physical_time": read_vtu_time_value(vtu),
         "output_index": int(match.group(1)) if (match := re.search(r"([0-9]+)$", vtu.stem)) else None,

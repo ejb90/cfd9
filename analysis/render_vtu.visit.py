@@ -106,6 +106,21 @@ def configure_annotations(show_legends):
     SetAnnotationAttributes(attributes)
 
 
+def add_time_annotation(physical_time):
+    """Place the frame's physical time in the lower-right corner."""
+    annotation = CreateAnnotationObject("Text2D", "cfd9_time_label")
+    if physical_time is None:
+        annotation.text = "t = unavailable"
+    else:
+        annotation.text = "t = {:.4g} s".format(float(physical_time))
+    annotation.position = (0.76, 0.035)
+    annotation.height = 0.026
+    annotation.fontBold = 1
+    annotation.useForegroundForTextColor = 1
+    annotation.fontShadow = 1
+    return annotation
+
+
 def configure_view(bounds, viewport=(0.0, 1.0, 0.0, 1.0)):
     view = View2DAttributes()
     view.windowCoords = tuple(bounds)
@@ -235,7 +250,9 @@ if missing_native_fields:
     fail("required scalar fields are absent: {}".format(missing_native_fields))
 
 legend_mode = config.get("legend_mode", "embedded")
+ranges_only = bool(config.get("ranges_only", False))
 configure_annotations(legend_mode != "none")
+time_annotation = add_time_annotation(config.get("physical_time"))
 
 # Probe the common physical view before selecting the output height. By
 # default, the raster aspect ratio follows the requested view and therefore
@@ -279,6 +296,7 @@ manifest = {
     "interface_fields": interface_fields if config["draw_interfaces"] else [],
     "interface_cutoff": config["interface_cutoff"],
     "legend_mode": legend_mode,
+    "time_annotation": time_annotation.text,
     "plots": {},
 }
 
@@ -315,6 +333,14 @@ for plot_name in config["plots"]:
             limits = [0.0, 1.0]
         else:
             limits = data_range
+    if ranges_only:
+        manifest["plots"][plot_name] = {
+            "file": None,
+            "variable": definition["variable"],
+            "data_range": data_range,
+            "colour_limits": [float(limits[0]), float(limits[1])],
+        }
+        continue
     colour_table = configure_pseudocolour(definition, limits, legend_mode != "none")
     legend = configure_legend(
         0,
