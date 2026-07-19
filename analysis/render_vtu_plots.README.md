@@ -176,9 +176,11 @@ python analysis/render_vtu_time_series.py RUN_DIR tiles \
 
 The GIFs are named `density.gif`, `schlieren.gif`, and `pressure.gif` (or use
 the supplied prefix), and are listed under `animations` in `time_series.json`.
-Frame order follows the selected series order rather than lexical filename
-order. `--gif-delay` is in centiseconds and defaults to 6; GIF creation uses
-ImageMagick, configurable with `--magick`.
+Frame order follows embedded physical time rather than supplied order or lexical
+filename order. Re-running the command with `--gif`/`--gifs` reuses the existing
+series manifest and PNG tiles, replacing only the GIFs without requiring
+`--overwrite`. `--gif-delay` is in centiseconds and defaults to 6; GIF creation
+uses ImageMagick, configurable with `--magick`.
 
 The wrapper renders a VTU only once if several requested times select the same
 file. Its `time_series.json` manifest preserves every request in order and

@@ -82,6 +82,7 @@ def parse_args() -> argparse.Namespace:
         help="volume-fraction cutoff for --bubble-crop-component (default: --interface-cutoff)",
     )
     parser.add_argument(
+        "--gif",
         "--gifs",
         "--make-gifs",
         dest="gifs",
@@ -309,9 +310,25 @@ def make_gifs(
         raise ValueError("--gifs requires ImageMagick; pass --magick /path/to/magick")
 
     animations: dict[str, str] = {}
+    if any(frame.get("physical_time") is None for frame in frames):
+        raise ValueError("GIF assembly requires an embedded physical TimeValue for every frame")
+    ordered_frames = sorted(frames, key=lambda frame: float(frame["physical_time"]))
     for plot_name in args.plots:
-        frames_for_plot = [frame["plots"][plot_name] for frame in frames]
+        frames_for_plot: list[str] = []
+        seen: set[Path] = set()
+        for frame in ordered_frames:
+            try:
+                path = Path(frame["plots"][plot_name])
+            except KeyError as exc:
+                raise ValueError(f"existing series has no {plot_name!r} plot tiles") from exc
+            if not path.is_file():
+                raise ValueError(f"GIF frame is missing: {path}")
+            if path not in seen:
+                seen.add(path)
+                frames_for_plot.append(str(path))
         target = output_dir / (f"{args.prefix}_{plot_name}.gif" if args.prefix else f"{plot_name}.gif")
+        if target.exists():
+            target.unlink()
         command = [
             str(requested),
             "-delay",
@@ -328,6 +345,23 @@ def make_gifs(
             raise ValueError(f"ImageMagick GIF assembly failed for {plot_name}")
         animations[plot_name] = str(target)
     return animations
+
+
+def rebuild_existing_gifs(args: argparse.Namespace, series_manifest: Path, output_dir: Path) -> bool:
+    """Reuse existing tiles and manifest when GIF-only work was requested."""
+    if not args.gifs or args.overwrite or not series_manifest.is_file():
+        return False
+    try:
+        manifest = json.loads(series_manifest.read_text())
+        frames = manifest["frames"]
+        animations = make_gifs(args, frames, output_dir)
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"GIF assembly failed: {exc}") from exc
+    manifest["animations"] = animations
+    manifest["gif_delay_centiseconds"] = args.gif_delay
+    series_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    print(f"Rebuilt {len(animations)} GIFs from existing tiles; series manifest: {series_manifest}")
+    return True
 
 
 def main() -> None:
@@ -362,13 +396,14 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     series_name = f"{args.prefix}_time_series.json" if args.prefix else "time_series.json"
     series_manifest = output_dir / series_name
+    if rebuild_existing_gifs(args, series_manifest, output_dir):
+        return
     shared_legend_paths = {
         name: output_dir / (f"{args.prefix}_{name}_legend.png" if args.prefix else f"{name}_legend.png")
         for name in args.plots
         if args.legend_mode == "separate"
     }
-    gif_paths = [output_dir / (f"{args.prefix}_{name}.gif" if args.prefix else f"{name}.gif") for name in args.plots]
-    series_outputs = [series_manifest, *shared_legend_paths.values(), *(gif_paths if args.gifs else [])]
+    series_outputs = [series_manifest, *shared_legend_paths.values()]
     collisions = [path for path in series_outputs if path.exists()]
     if collisions and not args.overwrite:
         names = "\n  ".join(str(path) for path in collisions)
@@ -430,6 +465,7 @@ def main() -> None:
         "bubble_crop_width": bubble_crop_width,
         "legends": shared_legends,
         "animations": animations,
+        "gif_delay_centiseconds": args.gif_delay if args.gifs else None,
         "frames": frames,
     }
     series_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
