@@ -243,16 +243,15 @@ def classify_run(run_dir: Path, slurm_jobs: dict[Path, SlurmJob], tolerance: flo
     end_time = target_time(run_dir)
     last_time = last_solver_time(run_dir)
     started = (run_dir / "start").is_file() or has_run_artifacts(run_dir)
-    done = (run_dir / "done").is_file()
     slurm_job = slurm_jobs.get(run_dir.resolve())
     successful = started and reached_end_time(last_time, end_time, tolerance)
 
-    if successful:
+    if slurm_job is not None:
+        status = "running"
+    elif successful:
         status = "success"
     elif not started:
         status = "not started"
-    elif not done and slurm_job is not None:
-        status = "running"
     else:
         status = "failed"
 
