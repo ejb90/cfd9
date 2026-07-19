@@ -193,10 +193,11 @@ if len(volume_fraction_fields) < 2:
     fail("at least two numbered volume-fraction fields are required; found {}".format(volume_fraction_fields))
 
 schlieren_uses_native = "schlieren" in scalars
+DefineScalarExpression("plot_schlieren_fallback", "magnitude(gradient(<density>))")
 if schlieren_uses_native:
     DefineScalarExpression("plot_schlieren", "<schlieren>")
 else:
-    DefineScalarExpression("plot_schlieren", "magnitude(gradient(<density>))")
+    DefineScalarExpression("plot_schlieren", "<plot_schlieren_fallback>")
 
 if "u" not in scalars or "v" not in scalars:
     fail("vorticity requires scalar velocity fields 'u' and 'v'")
@@ -296,7 +297,7 @@ for plot_name in config["plots"]:
         # native diagnostic cannot prevent the other plot tiles from being
         # rendered.
         DeleteAllPlots()
-        DefineScalarExpression("plot_schlieren", "magnitude(gradient(<density>))")
+        definition = dict(definition, variable="plot_schlieren_fallback")
         schlieren_uses_native = False
         if not AddPlot("Pseudocolor", definition["variable"], 1, 0) or not DrawPlots():
             fail("could not draw fallback schlieren pseudocolour plot")

@@ -389,9 +389,12 @@ def main() -> None:
         frame = next(frame for frame in frames if Path(frame["vtu"]) == path)
         bounds = tuple(frame["bubble_crop_bounds"]) if "bubble_crop_bounds" in frame else args.bounds
         append_render_options(command, args, child_prefix, child_legend_mode, bounds)
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False, text=True, capture_output=True)
         if completed.returncode:
-            raise SystemExit(f"rendering failed for {path} with exit status {completed.returncode}")
+            diagnostic = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            if diagnostic:
+                diagnostic = f"\nRenderer output:\n{diagnostic[-4000:]}"
+            raise SystemExit(f"rendering failed for {path} with exit status {completed.returncode}{diagnostic}")
         rendered_manifests[path] = output_dir / f"{child_prefix}_plots.json"
 
     shared_legends = {}

@@ -255,7 +255,13 @@ def main() -> None:
             str(visit_script),
             str(config_path),
         ]
-        completed = subprocess.run(command, check=False, stdin=subprocess.DEVNULL)
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+        )
 
     if legend_mode == "separate":
         magick = args.magick.expanduser().resolve() if args.magick is not None else shutil.which("magick")
@@ -294,7 +300,12 @@ def main() -> None:
     successful_status = completed.returncode in (0, 250)
     if not successful_status or missing_outputs:
         missing = ", ".join(str(path) for path in missing_outputs) or "none"
-        raise SystemExit(f"VisIt rendering failed with exit status {completed.returncode}; missing outputs: {missing}")
+        diagnostic = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+        if diagnostic:
+            diagnostic = f"\nVisIt output:\n{diagnostic[-4000:]}"
+        raise SystemExit(
+            f"VisIt rendering failed with exit status {completed.returncode}; missing outputs: {missing}{diagnostic}"
+        )
     print(f"Rendered {len(args.plots)} plot tiles; manifest: {manifest}")
 
 
