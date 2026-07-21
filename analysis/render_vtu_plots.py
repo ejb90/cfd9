@@ -12,7 +12,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-PLOT_NAMES = ("density", "schlieren", "pressure", "vorticity", "mixedness")
+DEFAULT_PLOTS = (
+    "density",
+    "schlieren",
+    "postprocessed_schlieren",
+    "pressure",
+    "vorticity",
+    "mixedness",
+)
+PLOT_NAMES = DEFAULT_PLOTS
 
 
 def read_vtu_time_value(path: Path) -> float | None:
@@ -61,8 +69,11 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
         "--plots",
         nargs="+",
         choices=PLOT_NAMES,
-        default=list(PLOT_NAMES),
-        help="plot presets to render (default: all five)",
+        default=list(DEFAULT_PLOTS),
+        help=(
+            "plot presets to render (default: density, native schlieren, post-processed schlieren, "
+            "pressure, vorticity, mixedness)"
+        ),
     )
     parser.add_argument("--prefix", help="output filename prefix (default: VTU stem)")
     parser.add_argument("--width", type=int, default=1600, help="PNG width in pixels (default: 1600)")
@@ -135,7 +146,7 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Use VisIt to render five consistently framed PNG tiles from one VTU file."
+        description="Use VisIt to render consistently framed PNG tiles from one VTU file."
     )
     parser.add_argument("vtu", type=Path, help="single .vtu file to render")
     parser.add_argument(

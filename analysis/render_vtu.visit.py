@@ -24,6 +24,12 @@ PLOT_DEFINITIONS = {
         "invert": True,
         "legend_title": "|grad rho| [kg m^-4]",
     },
+    "postprocessed_schlieren": {
+        "variable": "plot_postprocessed_schlieren",
+        "colour_table": "gray",
+        "invert": True,
+        "legend_title": "|grad rho| [kg m^-4]",
+    },
     "pressure": {
         "variable": "pressure",
         "colour_table": "hot_desaturated",
@@ -51,6 +57,7 @@ INTERFACE_COLOURS = (
     (240, 228, 66, 255),
 )
 SCHLIEREN_RANGE_CEILING = 1.0e10
+SCHLIEREN_PLOTS = ("schlieren", "postprocessed_schlieren")
 
 
 def fail(message):
@@ -241,6 +248,10 @@ DefineScalarExpression(
     "plot_schlieren_fallback_clean",
     "if(lt(<plot_schlieren_fallback>,{}),<plot_schlieren_fallback>,0)".format(SCHLIEREN_RANGE_CEILING),
 )
+DefineScalarExpression(
+    "plot_postprocessed_schlieren",
+    "if(lt(<plot_schlieren_fallback>,{}),<plot_schlieren_fallback>,0)".format(SCHLIEREN_RANGE_CEILING),
+)
 
 if "u" not in scalars or "v" not in scalars:
     fail("vorticity requires scalar velocity fields 'u' and 'v'")
@@ -331,7 +342,11 @@ manifest = {
 for plot_name in config["plots"]:
     definition = PLOT_DEFINITIONS[plot_name]
     add_scalar_plot(definition["variable"], plot_name)
-    data_range = query_schlieren_range() if plot_name == "schlieren" else query_range(plot_name)
+    data_range = (
+        query_schlieren_range(definition["variable"])
+        if plot_name in SCHLIEREN_PLOTS
+        else query_range(plot_name)
+    )
     if data_range is None:
         # Some solver outputs contain non-finite values in their stored
         # schlieren array.  Recompute the diagnostic from density so a bad
@@ -342,7 +357,7 @@ for plot_name in config["plots"]:
 
     limits = config["limits"].get(plot_name)
     if limits is None:
-        if plot_name == "schlieren":
+        if plot_name in SCHLIEREN_PLOTS:
             limits = [0.0, max(data_range[1], 1.0e-12)]
         elif plot_name == "vorticity":
             magnitude = max(abs(data_range[0]), abs(data_range[1]), 1.0e-12)
@@ -351,7 +366,7 @@ for plot_name in config["plots"]:
             limits = [0.0, 1.0]
         else:
             limits = data_range
-    # The schlieren range query briefly makes its masked helper expression the
+    # A schlieren range query briefly makes its masked helper expression the
     # active plot. Restore the real field before setting plot attributes.
     add_scalar_plot(definition["variable"], plot_name)
     if ranges_only:

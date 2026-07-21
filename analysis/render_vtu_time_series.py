@@ -318,7 +318,7 @@ def shared_colour_limits(
             raise ValueError(f"range query produced no values for {name}")
         lower = min(value[0] for value in values)
         upper = max(value[1] for value in values)
-        if name == "schlieren":
+        if name in ("schlieren", "postprocessed_schlieren"):
             shared[name] = [0.0, max(upper, 1.0e-12)]
         elif name == "vorticity":
             magnitude = max(abs(lower), abs(upper), 1.0e-12)

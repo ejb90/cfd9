@@ -5,6 +5,7 @@ file. The default output set is:
 
 - density;
 - numerical schlieren;
+- post-processed schlieren computed from the current density field in VisIt;
 - pressure;
 - signed spanwise vorticity;
 - normalised multi-material mixedness.
@@ -29,8 +30,9 @@ python analysis/render_vtu_plots.py \
 ```
 
 This produces `OUT_400_density.png`, `OUT_400_schlieren.png`,
-`OUT_400_pressure.png`, `OUT_400_vorticity.png`,
-`OUT_400_mixedness.png`, and `OUT_400_plots.json`.
+`OUT_400_postprocessed_schlieren.png`, `OUT_400_pressure.png`,
+`OUT_400_vorticity.png`, `OUT_400_mixedness.png`, and
+`OUT_400_plots.json`.
 
 ## Legends
 
@@ -110,6 +112,10 @@ Change the optional contour with `--interface-cutoff F`.
   expression. Isolated schlieren values at or above `1e10` are mapped to zero
   (white), preventing known numerical spikes from dominating a frame or
   time-series scale or appearing as false background features.
+- Post-processed schlieren is selected explicitly as
+  `--plots postprocessed_schlieren`. It always ignores the stored solver
+  diagnostic and evaluates `magnitude(gradient(<density>))` from the current
+  VTU density field directly in VisIt.
 - Vorticity evaluates `curl({<u>,<v>,0*<u>})`; for a 2D mesh VisIt returns the
   signed out-of-plane component.
 - For `N` material volume fractions, mixedness is
@@ -117,6 +123,13 @@ Change the optional contour with `--interface-cutoff F`.
 
 Render only a subset with, for example, `--plots density pressure`. Existing
 outputs are protected unless `--overwrite` is supplied.
+
+To compare the solver-written and VisIt-computed diagnostics side by side:
+
+```bash
+python analysis/render_vtu_plots.py OUT_400.vtu tiles \
+  --plots schlieren postprocessed_schlieren
+```
 
 ## Time series
 
