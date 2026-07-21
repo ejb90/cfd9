@@ -78,6 +78,7 @@ from cases.generate_cases import (  # noqa: E402
 from optimisation.ucns3d_pymoo import (  # noqa: E402
     Parameter,
     add_common_arguments,
+    evaluation_wall_time_seconds,
     launch_controller,
     run_optimisation,
     slurm_from_args,
@@ -105,7 +106,7 @@ DOMAIN = Domain(
 )
 
 SHOCK_POSITION_X = -1.25e-3
-FINAL_TIME = 3.0e-6
+FINAL_TIME = 2.9e-6
 OUTPUT_INTERVAL = 20.0e-9
 INVISCID_REYNOLDS_NUMBER = 1.0e12
 CFL = 0.2
@@ -142,6 +143,8 @@ def make_case(
     evaluation_index: int,
     *,
     cells_per_reference_diameter: int = DEFAULT_CELLS_PER_REFERENCE_DIAMETER,
+    evaluation_time: str = "72:00:00",
+    evaluation_wall_clock_limit: int = 259200,
 ) -> CaseConfig:
     """Map density and radius to a complete one-cavity UCNS3D case."""
     radius = values["bubble_radius_mm"] * 1.0e-3
@@ -174,6 +177,8 @@ def make_case(
         characteristic_length=2.0 * radius,
         reynolds_number=INVISCID_REYNOLDS_NUMBER,
         cfl=CFL,
+        wall_clock_limit=evaluation_wall_clock_limit,
+        slurm_wall_time=evaluation_time,
         job_name=f"water-air-one-{evaluation_index:06d}",
     )
 
@@ -227,6 +232,7 @@ def main() -> None:
     args = parse_args()
     if args.cells_per_reference_diameter < 1:
         raise ValueError("--cells-per-reference-diameter must be positive")
+    evaluation_wall_clock_limit = evaluation_wall_time_seconds(args.evaluation_time)
 
     if args.launch_controller:
         if args.prepare_only:
@@ -247,6 +253,8 @@ def main() -> None:
         make_case=partial(
             make_case,
             cells_per_reference_diameter=args.cells_per_reference_diameter,
+            evaluation_time=args.evaluation_time,
+            evaluation_wall_clock_limit=evaluation_wall_clock_limit,
         ),
         objective=objective,
         n_obj=2,

@@ -50,6 +50,7 @@ INTERFACE_COLOURS = (
     (0, 114, 178, 255),
     (240, 228, 66, 255),
 )
+SCHLIEREN_RANGE_CEILING = 1.0e10
 
 
 def fail(message):
@@ -69,13 +70,13 @@ def scalar_names(metadata):
     return [metadata.GetScalars(index).name for index in range(metadata.GetNumScalars())]
 
 
-def finite_range(value, label):
+def finite_range(value):
     numbers = [float(item) for item in value]
     if len(numbers) < 2 or not all(math.isfinite(item) for item in numbers[:2]):
-        fail("invalid MinMax query for {}: {}".format(label, value))
+        return None
     lower, upper = numbers[0], numbers[1]
     if lower > upper:
-        fail("reversed MinMax query for {}: {}".format(label, value))
+        return None
     if lower == upper:
         padding = max(abs(lower) * 1.0e-12, 1.0e-12)
         lower -= padding
@@ -83,14 +84,34 @@ def finite_range(value, label):
     return [lower, upper]
 
 
-def query_range(label):
+def query_range(label, allow_invalid=False):
     Query("MinMax")
-    return finite_range(GetQueryOutputValue(), label)
+    value = GetQueryOutputValue()
+    result = finite_range(value)
+    if result is None and not allow_invalid:
+        fail("invalid MinMax query for {}: {}".format(label, value))
+    return result
+
+
+def add_scalar_plot(variable, label):
+    """Make one scalar plot active and ready for a MinMax query or rendering."""
+    DeleteAllPlots()
+    if not AddPlot("Pseudocolor", variable, 1, 0):
+        fail("could not add {} pseudocolour plot".format(label))
+    if not DrawPlots():
+        fail("could not draw {} pseudocolour plot".format(label))
+    SetActivePlots(0)
+
+
+def query_schlieren_range(variable="plot_schlieren"):
+    """Query schlieren after discarding known non-physical numerical spikes."""
+    add_scalar_plot(variable, "schlieren range")
+    return query_range("schlieren", allow_invalid=True)
 
 
 def configure_annotations(show_legends):
     attributes = AnnotationAttributes()
-    attributes.axes2D.visible = 0
+    attributes.axes2D.visible = 1
     attributes.axes3D.visible = 0
     attributes.userInfoFlag = 0
     attributes.databaseInfoFlag = 0
@@ -100,6 +121,21 @@ def configure_annotations(show_legends):
     attributes.backgroundColor = (255, 255, 255, 255)
     attributes.foregroundColor = (0, 0, 0, 255)
     SetAnnotationAttributes(attributes)
+
+
+def add_time_annotation(physical_time):
+    """Place the frame's physical time in the lower-right corner."""
+    annotation = CreateAnnotationObject("Text2D", "cfd9_time_label")
+    if physical_time is None:
+        annotation.text = "t = unavailable"
+    else:
+        annotation.text = "t = {:.4g} s".format(float(physical_time))
+    annotation.position = (0.76, 0.035)
+    annotation.height = 0.026
+    annotation.fontBold = 1
+    annotation.useForegroundForTextColor = 1
+    annotation.fontShadow = 1
+    return annotation
 
 
 def configure_view(bounds, viewport=(0.0, 1.0, 0.0, 1.0)):
@@ -188,10 +224,23 @@ volume_fraction_fields = sorted(
 if len(volume_fraction_fields) < 2:
     fail("at least two numbered volume-fraction fields are required; found {}".format(volume_fraction_fields))
 
-if "schlieren" in scalars:
-    DefineScalarExpression("plot_schlieren", "<schlieren>")
+schlieren_uses_native = "schlieren" in scalars
+DefineScalarExpression("plot_schlieren_fallback", "magnitude(gradient(<density>))")
+if schlieren_uses_native:
+    schlieren_raw = "<schlieren>"
 else:
-    DefineScalarExpression("plot_schlieren", "magnitude(gradient(<density>))")
+    schlieren_raw = "<plot_schlieren_fallback>"
+# UCNS3D occasionally writes isolated, non-physical schlieren values around
+# 1e100. Map them to zero (white in the inverted grey table), so they neither
+# dominate MinMax queries nor appear as false background features.
+DefineScalarExpression(
+    "plot_schlieren",
+    "if(lt({},{}),{},0)".format(schlieren_raw, SCHLIEREN_RANGE_CEILING, schlieren_raw),
+)
+DefineScalarExpression(
+    "plot_schlieren_fallback_clean",
+    "if(lt(<plot_schlieren_fallback>,{}),<plot_schlieren_fallback>,0)".format(SCHLIEREN_RANGE_CEILING),
+)
 
 if "u" not in scalars or "v" not in scalars:
     fail("vorticity requires scalar velocity fields 'u' and 'v'")
@@ -229,7 +278,9 @@ if missing_native_fields:
     fail("required scalar fields are absent: {}".format(missing_native_fields))
 
 legend_mode = config.get("legend_mode", "embedded")
+ranges_only = bool(config.get("ranges_only", False))
 configure_annotations(legend_mode != "none")
+time_annotation = add_time_annotation(config.get("physical_time"))
 
 # Probe the common physical view before selecting the output height. By
 # default, the raster aspect ratio follows the requested view and therefore
@@ -273,18 +324,21 @@ manifest = {
     "interface_fields": interface_fields if config["draw_interfaces"] else [],
     "interface_cutoff": config["interface_cutoff"],
     "legend_mode": legend_mode,
+    "time_annotation": time_annotation.text,
     "plots": {},
 }
 
 for plot_name in config["plots"]:
-    DeleteAllPlots()
     definition = PLOT_DEFINITIONS[plot_name]
-    if not AddPlot("Pseudocolor", definition["variable"], 1, 0):
-        fail("could not add {} pseudocolour plot".format(plot_name))
-    if not DrawPlots():
-        fail("could not draw {} pseudocolour plot".format(plot_name))
-    SetActivePlots(0)
-    data_range = query_range(plot_name)
+    add_scalar_plot(definition["variable"], plot_name)
+    data_range = query_schlieren_range() if plot_name == "schlieren" else query_range(plot_name)
+    if data_range is None:
+        # Some solver outputs contain non-finite values in their stored
+        # schlieren array.  Recompute the diagnostic from density so a bad
+        # native diagnostic cannot prevent the other plot tiles from being
+        # rendered.
+        definition = dict(definition, variable="plot_schlieren_fallback_clean")
+        data_range = query_schlieren_range("plot_schlieren_fallback_clean")
 
     limits = config["limits"].get(plot_name)
     if limits is None:
@@ -297,6 +351,17 @@ for plot_name in config["plots"]:
             limits = [0.0, 1.0]
         else:
             limits = data_range
+    # The schlieren range query briefly makes its masked helper expression the
+    # active plot. Restore the real field before setting plot attributes.
+    add_scalar_plot(definition["variable"], plot_name)
+    if ranges_only:
+        manifest["plots"][plot_name] = {
+            "file": None,
+            "variable": definition["variable"],
+            "data_range": data_range,
+            "colour_limits": [float(limits[0]), float(limits[1])],
+        }
+        continue
     colour_table = configure_pseudocolour(definition, limits, legend_mode != "none")
     legend = configure_legend(
         0,

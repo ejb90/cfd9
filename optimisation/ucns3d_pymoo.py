@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import pickle
+import re
 import shlex
 import shutil
 import signal
@@ -36,15 +37,8 @@ class Parameter:
 
 @dataclass(frozen=True)
 class SlurmSettings:
-    command: str = "srun -n 2 ./ucns3d_p"
     executable: Path | None = None
     copy_executable: bool = False
-    job_time: str = "24:00:00"
-    partition: str | None = None
-    ntasks: int = 2
-    cpus_per_task: int = 1
-    account: str | None = None
-    extra_sbatch: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +60,20 @@ class CampaignStoppedError(RuntimeError):
 
 
 _STOP_REQUESTED = False
+
+
+def evaluation_wall_time_seconds(value: str) -> int:
+    """Parse the optimisation evaluation limit in Slurm ``[D-]HH:MM:SS`` form."""
+    match = re.fullmatch(r"(?:(\d+)-)?(\d+):(\d{2}):(\d{2})", value)
+    if match is None:
+        raise ValueError("--evaluation-time must use [D-]HH:MM:SS, for example 02:30:00 or 1-00:00:00")
+    days, hours, minutes, seconds = (int(item) if item is not None else 0 for item in match.groups())
+    if minutes > 59 or seconds > 59:
+        raise ValueError("--evaluation-time minutes and seconds must each be below 60")
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    if total < 1:
+        raise ValueError("--evaluation-time must be positive")
+    return total
 
 
 def _request_stop(signum: int, _frame: object) -> None:
@@ -110,41 +118,6 @@ def stage_executable(run_dir: Path, settings: SlurmSettings) -> None:
         shutil.copy2(source, target)
     else:
         target.symlink_to(source)
-
-
-def write_slurm_script(run_dir: Path, settings: SlurmSettings, job_name: str) -> Path:
-    lines = [
-        "#!/usr/bin/env bash",
-        f"#SBATCH --job-name={job_name}",
-        "#SBATCH --nodes=1",
-        f"#SBATCH --ntasks={settings.ntasks}",
-        f"#SBATCH --cpus-per-task={settings.cpus_per_task}",
-        f"#SBATCH --time={settings.job_time}",
-        "#SBATCH --output=slurm-%j.out",
-        "#SBATCH --error=slurm-%j.err",
-    ]
-    if settings.partition:
-        lines.append(f"#SBATCH --partition={settings.partition}")
-    if settings.account:
-        lines.append(f"#SBATCH --account={settings.account}")
-    lines.extend(f"#SBATCH {line}" for line in settings.extra_sbatch)
-    lines.extend(
-        [
-            "",
-            "set -euo pipefail",
-            'cd "${SLURM_SUBMIT_DIR}"',
-            "date -Iseconds > start",
-            "rm -f Errors.dat errors.dat fort* GRID* history.tct history.txt OUT*.vtu OUT*.pvtu "
-            "RESTART.dat ucns3d.err ucns3d.out pos*",
-            f"{settings.command} > ucns3d.out 2> ucns3d.err",
-            "date -Iseconds > done",
-            "",
-        ]
-    )
-    script = run_dir / "run_ucns3d.sbatch"
-    script.write_text("\n".join(lines), encoding="ascii")
-    script.chmod(0o755)
-    return script
 
 
 def write_controller_script(
@@ -248,13 +221,12 @@ def prepare_evaluation(
         generated_dir.rename(run_dir)
     write_parameter_table(run_dir / "parameters.csv", parameters, values)
     stage_executable(run_dir, slurm)
-    write_slurm_script(run_dir, slurm, job_name=f"opt-{index:06d}")
     return Evaluation(index=index, generation=generation, point_index=point_index, run_dir=run_dir, x=np.array(x))
 
 
 def submit(evaluation: Evaluation) -> Evaluation:
     result = subprocess.run(
-        ["sbatch", "--parsable", "run_ucns3d.sbatch"],
+        ["sbatch", "--parsable", "ucns3d.jcf"],
         cwd=evaluation.run_dir,
         text=True,
         capture_output=True,
@@ -580,6 +552,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         help="Submit this driver as a three-day, one-core serial Slurm controller job.",
     )
     parser.add_argument("--controller-time", default="72:00:00")
+    parser.add_argument(
+        "--evaluation-time",
+        default="72:00:00",
+        metavar="[D-]HH:MM:SS",
+        help="Slurm wall-clock limit for each CFD evaluation (default: 72:00:00)",
+    )
     parser.add_argument("--controller-partition", default="serial")
     parser.add_argument("--poll-interval", type=float, default=60.0)
     parser.add_argument("--max-concurrent", type=int)
@@ -587,22 +565,10 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--resume", action="store_true", help="Resume from the last completed-generation checkpoint.")
     parser.add_argument("--ucns3d", type=Path, help="Path to ucns3d_p; symlinked into each run directory.")
     parser.add_argument("--copy-executable", action="store_true")
-    parser.add_argument("--command", default="srun -n 2 ./ucns3d_p")
-    parser.add_argument("--job-time", default="24:00:00")
-    parser.add_argument("--partition")
-    parser.add_argument("--ntasks", type=int, default=2)
-    parser.add_argument("--cpus-per-task", type=int, default=1)
-    parser.add_argument("--account")
 
 
 def slurm_from_args(args: argparse.Namespace) -> SlurmSettings:
     return SlurmSettings(
-        command=args.command,
         executable=args.ucns3d,
         copy_executable=args.copy_executable,
-        job_time=args.job_time,
-        partition=args.partition,
-        ntasks=args.ntasks,
-        cpus_per_task=args.cpus_per_task,
-        account=args.account,
     )

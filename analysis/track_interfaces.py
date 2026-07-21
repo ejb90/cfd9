@@ -11,6 +11,12 @@ from vtk.util.numpy_support import vtk_to_numpy
 
 mpl.rcParams.update({"font.size": 16})
 
+INTERFACE_PLOTS = {
+    1: ("Upstream", "--"),
+    2: ("Downstream", "-"),
+    3: ("Jet", ":"),
+}
+
 
 def get_bubble_interface_position_npz(
     volfrac: np.ndarray,
@@ -57,7 +63,12 @@ def extract_interface_positions_vtk(
     volfrac_cutoff: float = 0.5,
     symmetry_line: float | None = None,
 ) -> np.ndarray:
-    """Extract and cache interface positions from the VTUs in one run."""
+    """Extract and cache interface positions from the VTUs in one run.
+
+    Outputs in which the bubble has mixed below ``volfrac_cutoff`` contribute
+    no position row.  This preserves the preceding, physically meaningful
+    interface history instead of treating bubble disappearance as an error.
+    """
     volume_fraction_field = f"volume_fraction{component}"
     cutoff_tag = f"{volfrac_cutoff:g}".replace("-", "m").replace(".", "p")
     axis_tag = "auto" if symmetry_line is None else f"{symmetry_line:g}".replace("-", "m").replace(".", "p")
@@ -71,7 +82,7 @@ def extract_interface_positions_vtk(
     if not files:
         raise ValueError(f"{root} does not contain numbered OUT_*.vtu files")
 
-    cache_is_current = cache_file.is_file() and cache_file.stat().st_mtime_ns >= max(
+    cache_is_current = cache_file.is_file() and cache_file.stat().st_size > 0 and cache_file.stat().st_mtime_ns >= max(
         path.stat().st_mtime_ns for path in files
     )
     if cache_is_current:
@@ -80,7 +91,12 @@ def extract_interface_positions_vtk(
     else:
         data = []
 
-        for fname in files:
+        for file_index, fname in enumerate(files, start=1):
+            print(
+                f"\rProcessing {file_index}/{len(files)} in {root}: {fname.name}",
+                end="",
+                flush=True,
+            )
             # Read the VTU file
             reader = vtk.vtkXMLUnstructuredGridReader()
             reader.SetFileName(fname)
@@ -98,6 +114,12 @@ def extract_interface_positions_vtk(
                 raise ValueError(f"{fname} does not contain cell-data field {volume_fraction_field!r}")
             vf = vtk_to_numpy(vf_array)
 
+            # Once mixing has reduced every cell below the threshold, there
+            # is no interface position to track for this output.  Skip it
+            # rather than aborting the entire time history.
+            if not np.any(vf > volfrac_cutoff):
+                continue
+
             # Compute centroids for all cells
             n_cells = ug.GetNumberOfCells()
             centroids = np.zeros((n_cells, 3))
@@ -108,8 +130,6 @@ def extract_interface_positions_vtk(
                 centroids[i] = pts.mean(axis=0)
 
             selected = centroids[vf > volfrac_cutoff]
-            if not selected.size:
-                raise ValueError(f"{fname} has no cells above volume-fraction cutoff {volfrac_cutoff:g}")
 
             current_symmetry_line = symmetry_line
             if current_symmetry_line is None:
@@ -131,7 +151,8 @@ def extract_interface_positions_vtk(
             )
             data.append([time, upstream, downstream, jet])
 
-        array = np.asarray(data)
+        print()
+        array = np.asarray(data, dtype=float).reshape(-1, 4)
         sorted_array = array[array[:, 0].argsort()]
         np.savetxt(cache_file, sorted_array, delimiter=",")
     return sorted_array
@@ -160,6 +181,7 @@ def plot_all_interfaces_vs_time(
     component: int,
     volfrac_cutoff: float = 0.5,
     symmetry_line: float | None = None,
+    interfaces: tuple[int, ...] = (1, 2, 3),
 ):
     """Plot all interfaces vs time"""
     fig = plt.figure(figsize=(10, 10))
@@ -174,9 +196,9 @@ def plot_all_interfaces_vs_time(
     for i, run in enumerate(runs):
         data = extract_interface_positions_vtk(run, component, volfrac_cutoff, symmetry_line)
         c = next(color_cycle)
-        ax.plot(data[:, 1], data[:, 0], label=f"{labels[i]}: Upstream", ls="--", c=c)
-        ax.plot(data[:, 2], data[:, 0], label=f"{labels[i]}: Downstream", ls="-", c=c)
-        ax.plot(data[:, 3], data[:, 0], label=f"{labels[i]}: Jet", ls=":", c=c)
+        for interface in interfaces:
+            name, line_style = INTERFACE_PLOTS[interface]
+            ax.plot(data[:, interface], data[:, 0], label=f"{labels[i]}: {name}", ls=line_style, c=c)
 
     ax.legend()
     plt.tight_layout()
@@ -217,6 +239,7 @@ def plot_all_interfaces_vs_time_comparison(
     component2: int,
     volfrac_cutoff: float = 0.5,
     symmetry_line: float | None = None,
+    interfaces: tuple[int, ...] = (1, 2, 3),
 ):
     """Plot interfaces for two sets of runs."""
     fig = plt.figure(figsize=(10, 10))
@@ -240,19 +263,16 @@ def plot_all_interfaces_vs_time_comparison(
         color_cycle = cycle(colors)
         for j, run in enumerate(runs):
             data = extract_interface_positions_vtk(run, component, volfrac_cutoff, symmetry_line)
-            c = next(color_cycle)
-            ax.plot(
-                data[:, 1], data[:, 0], label=f"{group_label}: {run_labels[j]}: Upstream", ls=line_style, c=c
-            )
-            c = next(color_cycle)
-            ax.plot(
-                data[:, 2],
-                data[:, 0],
-                label=f"{group_label}: {run_labels[j]}: Downstream",
-                ls=line_style,
-                c=c,
-            )
-            # ax.plot(data[:, 3], data[:, 0], label=f"{labels1[i]}: {labels2[j]}: Jet", ls=":", c=c)
+            for interface in interfaces:
+                name, _ = INTERFACE_PLOTS[interface]
+                c = next(color_cycle)
+                ax.plot(
+                    data[:, interface],
+                    data[:, 0],
+                    label=f"{group_label}: {run_labels[j]}: {name}",
+                    ls=line_style,
+                    c=c,
+                )
 
     ax.legend()
     plt.tight_layout()
@@ -360,6 +380,15 @@ def parse_args() -> argparse.Namespace:
         metavar="Y",
         help="y coordinate of the symmetry axis (default: infer boundary or domain midpoint)",
     )
+    parser.add_argument(
+        "--interfaces",
+        type=int,
+        nargs="+",
+        choices=tuple(INTERFACE_PLOTS),
+        default=(1, 2, 3),
+        metavar="N",
+        help="interface traces to plot: 1=upstream, 2=downstream, 3=jet (default: all)",
+    )
     args = parser.parse_args()
     if not args.root.is_dir():
         parser.error(f"root directory does not exist: {args.root}")
@@ -375,6 +404,9 @@ def parse_args() -> argparse.Namespace:
         parser.error("--resolutions is only supported for a single convergence root")
     if not 0.0 < args.volfrac_cutoff < 1.0:
         parser.error("--volfrac-cutoff must lie strictly between 0 and 1")
+    if len(set(args.interfaces)) != len(args.interfaces):
+        parser.error("--interfaces values must not be repeated")
+    args.interfaces = tuple(args.interfaces)
     return args
 
 
@@ -395,6 +427,7 @@ if __name__ == "__main__":
             args.component,
             args.volfrac_cutoff,
             args.symmetry_line,
+            args.interfaces,
         )
     else:
         comparison_runs = find_run_directories(args.comparison_root)
@@ -412,4 +445,5 @@ if __name__ == "__main__":
             args.component2 if args.component2 is not None else args.component,
             args.volfrac_cutoff,
             args.symmetry_line,
+            args.interfaces,
         )

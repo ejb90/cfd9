@@ -10,9 +10,12 @@ file. The default output set is:
 - normalised multi-material mixedness.
 
 Each image uses the same physical view and pixel dimensions. A colour legend
-is embedded by default. Axes, database names, time labels, and interpolated
-interface contours are omitted so the images can later be tiled without
-case-specific decorations.
+is embedded by default. A physical-time annotation is placed in the lower-right
+corner of every image. The physical box and x/y ticks are shown; database names
+and interpolated interface contours are omitted so the images can later be
+tiled without unnecessary case-specific decorations. ImageMagick trims the
+surrounding white canvas after rendering (the launcher accepts either `magick`
+or legacy `convert`).
 The default image height is derived from the physical view, so the complete
 domain is not distorted or surrounded by unused canvas space. Set both
 `--width` and `--height` when a later layout requires fixed raster dimensions.
@@ -102,7 +105,11 @@ Change the optional contour with `--interface-cutoff F`.
 
 - Density and pressure use the native VTU fields.
 - Schlieren uses the native `schlieren` field when present and otherwise
-  evaluates `magnitude(gradient(<density>))` in VisIt.
+  evaluates `magnitude(gradient(<density>))` in VisIt. If the native field has
+  a non-finite range, the renderer automatically retries with that density-gradient
+  expression. Isolated schlieren values at or above `1e10` are mapped to zero
+  (white), preventing known numerical spikes from dominating a frame or
+  time-series scale or appearing as false background features.
 - Vorticity evaluates `curl({<u>,<v>,0*<u>})`; for a 2D mesh VisIt returns the
   signed out-of-plane component.
 - For `N` material volume fractions, mixedness is
@@ -145,18 +152,64 @@ All single-VTU options are available, including `--plots`, `--bounds`,
 `--legend-mode`, `--visit`, and `--magick`. Use `--dry-run` to inspect
 file/time matching without starting VisIt.
 
+For a bubble-following temporal crop, pass the bubble component to
+`--bubble-crop-component`. The tracker evaluates every numbered VTU in the run,
+uses the minimum/maximum of its upstream, downstream, and jet x positions, and
+selects the largest resulting width. Each selected image uses that fixed width
+but is centred on its own bubble midpoint `(xmin + xmax) / 2`:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --times 0 5.0e-7 1.0e-6 \
+  --bubble-crop-component 2 \
+  --bubble-crop-cutoff 0.5
+```
+
+Without `--bubble-crop-cutoff`, the value of `--interface-cutoff` is used. The
+crop preserves the full VTU y extent, or the y limits from `--bounds` when
+they are supplied.
+
+Add `--gifs` to assemble each requested pseudocolour tile sequence into an
+animated GIF after the time-series render completes:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --timesteps 0 20 40 60 80 \
+  --plots density schlieren pressure \
+  --gifs --gif-delay 6
+```
+
+The GIFs are named `density.gif`, `schlieren.gif`, and `pressure.gif` (or use
+the supplied prefix), and are listed under `animations` in `time_series.json`.
+Frame order follows embedded physical time rather than supplied order or lexical
+filename order. Re-running the command with `--gif`/`--gifs` reuses the existing
+series manifest and PNG tiles, replacing only the GIFs without requiring
+`--overwrite`. `--gif-delay` is in centiseconds and defaults to 6; GIF creation
+uses ImageMagick, configurable with `--magick`.
+
 The wrapper renders a VTU only once if several requested times select the same
 file. Its `time_series.json` manifest preserves every request in order and
 records the chosen file, embedded physical time, error from the requested
-time, output index, child manifest, and plot filenames. For meaningful visual
-comparisons, supply common `--limits` for each scalar rather than allowing
-every frame to autoscale independently.
+time, output index, child manifest, and plot filenames.
 
-Time-series plots embed legends by default, ensuring every independently
-scaled tile remains interpretable. To produce one shared legend image per
-quantity instead, select `--legend-mode separate` and provide fixed
-`--limits` for every requested data-dependent plot. Mixedness already has the
-fixed range `[0,1]`:
+Use `--shared-limits` to preflight every selected unique VTU, find the global
+cell-data minimum and maximum for each requested quantity, and use those same
+colour bounds on every frame. Schlieren remains zero-based, vorticity remains
+symmetric about zero, and mixedness uses `[0, 1]`. Explicit `--limits` entries
+take precedence for their named plots. The selected bounds are recorded as
+`shared_limits` in `time_series.json`:
+
+```bash
+python analysis/render_vtu_time_series.py RUN_DIR tiles \
+  --timesteps 0 20 40 60 80 \
+  --plots density pressure vorticity \
+  --shared-limits
+```
+
+Time-series plots embed legends by default. To produce one shared legend image
+per quantity instead, select `--legend-mode separate` and provide fixed
+`--limits` for every requested data-dependent plot, or use `--shared-limits`
+to calculate them first. Mixedness already has the fixed range `[0,1]`:
 
 ```bash
 python analysis/render_vtu_time_series.py RUN_DIR tiles \

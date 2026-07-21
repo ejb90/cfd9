@@ -118,6 +118,7 @@ class CaseConfig:
     dt: float = 1.9
     max_iterations: int = 100000000
     wall_clock_limit: int = 432000
+    slurm_wall_time: str = "72:00:00"
     job_name: str | None = None
 
 
@@ -372,7 +373,7 @@ def write_job_script(path: Path, config: CaseConfig) -> None:
 #SBATCH --cpus-per-task=1
 #SBATCH --output=out
 #SBATCH --error=err
-#SBATCH --time=72:00:00
+#SBATCH --time={config.slurm_wall_time}
 #SBATCH --mem-bind=local
 #SBATCH --partition=parallel
 #SBATCH --mem=0
@@ -508,6 +509,7 @@ def case_manifest(config: CaseConfig) -> dict[str, Any]:
             "output_interval": config.output_interval,
             "max_iterations": config.max_iterations,
             "wall_clock_limit": config.wall_clock_limit,
+            "slurm_wall_time": config.slurm_wall_time,
             "characteristic_length": config.characteristic_length,
         },
     }
