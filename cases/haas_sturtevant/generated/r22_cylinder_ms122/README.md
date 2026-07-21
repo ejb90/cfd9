@@ -5,12 +5,12 @@ Convergent R22-cylinder case, figure 11, Ms=1.22.
 Generated from `cases/generate_cases.py`.
 
 Case setup:
-- Domain: x=[-0.175, 0.15], y=[0, 0.0445] m.
+- Domain: x=[-0.175, 0.15], y=[-0.0445, 0.0445] m.
 - Refined x band: [-0.05, 0.075] m.
-- Requested refined-region h: 0.0005 m.
-- Actual centre dx: 0.0005 m.
-- Actual dy: 0.0005 m.
-- Mesh cells: x=650, y=89, total=57850.
+- Requested refined-region h: 0.00016666667 m.
+- Actual centre dx: 0.00016666667 m.
+- Actual dy: 0.00016666667 m.
+- Mesh cells: x=1950, y=534, total=1041300.
 - Shock initially at x = 0.05 m, travelling right-to-left.
 - Left ambient state: rho = 1.198 kg/m3, p = 101325 Pa, u = 0 m/s.
 - Right ambient state: rho = 1.648884 kg/m3, p = 159059.98 Pa, u = -114.76066 m/s.

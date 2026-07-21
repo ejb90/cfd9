@@ -27,7 +27,7 @@
     "xmax": 0.15,
     "xmin": -0.175,
     "ymax": 0.0445,
-    "ymin": 0.0
+    "ymin": -0.0445
   },
   "generated_from": "cases/generate_cases.py",
   "materials": [
@@ -47,16 +47,16 @@
     }
   ],
   "mesh": {
-    "actual_dx": 0.0005,
-    "actual_dy": 0.0005,
+    "actual_dx": 0.00016666666666666666,
+    "actual_dy": 0.00016666666666666666,
     "buffer_factor": 1.0,
-    "cell_count": 57850,
-    "requested_h": 0.0005,
-    "x_cells": 650,
-    "x_center_cells": 250,
-    "x_left_cells": 250,
-    "x_right_cells": 150,
-    "y_cells": 89
+    "cell_count": 1041300,
+    "requested_h": 0.0001666666666666667,
+    "x_cells": 1950,
+    "x_center_cells": 750,
+    "x_left_cells": 750,
+    "x_right_cells": 450,
+    "y_cells": 534
   },
   "name": "helium_cylinder_ms122",
   "shock": {

@@ -35,20 +35,20 @@ from optimisation.ucns3d_pymoo import (  # noqa: E402
 AIR = Material("air", gamma=1.4, density=1.198, sound_speed=344.0)
 HELIUM_MIX = Material("helium_mixture", gamma=1.48, density=0.216, sound_speed=833.0)
 AMBIENT_PRESSURE = 101_325.0
-TEST_SECTION_HEIGHT = 0.089
+TEST_SECTION_HALF_HEIGHT = 0.0445
 CYLINDER_DIAMETER = 0.05
 DOMAIN = Domain(
     xmin=-0.35,
     xmax=0.25,
-    ymin=0.0,
-    ymax=TEST_SECTION_HEIGHT,
+    ymin=-TEST_SECTION_HALF_HEIGHT,
+    ymax=TEST_SECTION_HALF_HEIGHT,
     refined_xmin=-0.050,
     refined_xmax=0.055,
 )
 
 PARAMETERS = (
     Parameter("bubble_x", -0.010, 0.010),
-    Parameter("bubble_y", 0.038, 0.051),
+    Parameter("bubble_y", -0.0065, 0.0065),
     Parameter("bubble_diameter", 0.040, 0.060),
     Parameter("bubble_density", 0.150, 0.300),
 )
